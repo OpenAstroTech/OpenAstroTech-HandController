@@ -1,10 +1,10 @@
 # OpenAstroTech-HandController
 Firmware for a handcontroller that plugs into the OAT/OAM and can be plugged into a PC as well.
 
-##Status
+## Status
 Early stages of development, still designing and making a prototype/proof-of-concept.
 
-##Concept
+## Concept
 
 - Firmware reads LX200 commands from one Serial port (from PC) and queues them.  
 - Firmware processes input devices and controller logic creates jobs that are also queued.
