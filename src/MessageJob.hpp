@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
 #include <WString.h>
-#include <SoftwareSerial.h>
 
 #include "Utility.hpp"
 

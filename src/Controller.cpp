@@ -26,7 +26,7 @@ MessageJob* Controller::timeslice()
             break;
         case ControllerState::AwaitingReply:
             {
-                if (!_commandReply.isEmpty()) {
+                if (!_commandReply.length() == 0) {
 
                     // Process the reply
 

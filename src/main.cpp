@@ -1,11 +1,14 @@
 #include <Arduino.h>
 #include <WString.h>
-#include <SoftwareSerial.h>
 
 #include "MessageJob.hpp"
 #include "Controller.hpp"
 #include "Joystick.hpp"
 #include "Serial.hpp"
+#include "SerialUSBHost.hpp"
+// USBHost is defined in usbh_helper.h
+//#include "usbh_helper.h"
+#include "USBSerialInputDevice.hpp"
 
 #define SERIAL_BAUDRATE 19200
 #define D5 14
@@ -17,17 +20,46 @@ enum AppState
     AwaitingCommandReply,
 };
 
+Adafruit_USBH_CDC SerialHost;
+tusb_desc_device_t desc_device;
+
 AppState currentState;
 JobQueue jobQueue;
 MessageJob* activeJob = nullptr;
-SoftwareSerial* serial2;
-IInputDevice* device= new Joystick(15,16);
+
+USBSerialInputDevice* usbSerialDevice = new USBSerialInputDevice();
+IInputDevice* device = usbSerialDevice;
+//ISerial* serial2 = new SerialUsbHost(&SerialHost);
+//IInputDevice* device = new Joystick(15, 16);
 Controller controller(device);
 
+//------------- Core1 -------------//
+void setup1() {
+    // configure pio-usb: defined in usbh_helper.h
+    rp2040_configure_pio_usb();
+
+    // run host stack on controller (rhport) 1
+    // Note: For rp2040 pico-pio-usb, calling USBHost.begin() on core1 will have most of the
+    // host bit-banging processing works done in core1 to free up core0 for other works
+    USBHost.begin(1);
+
+    // Initialize SerialHost
+//     SerialHost.begin(115200);
+}
+
+void loop1() {
+    if (usbSerialDevice->isConnected()) {
+        // Use USB serial for mount communication instead of SoftwareSerial
+        // You would need to adapt the code to use usbSerialDevice->write() 
+        // and usbSerialDevice->readString() in place of serial2
+    }
+}
+
+//------------- Core0 -------------//
 void setup()
 {
     currentState = AppState::AppIdle;
-    serial2 = new SoftwareSerial(D5, D6);
+    // serial2 = new SoftwareSerial(D5, D6);
     Serial.begin(SERIAL_BAUDRATE);
     serial2->begin(SERIAL_BAUDRATE);
     // pinMode(LED_BUILTIN, OUTPUT);
@@ -66,7 +98,7 @@ void loop()
                 {
                     activeJob = jobQueue.dequeue();
                     LOG(DEBUG_JOBS, "[Idle] Job [%s] dequeued and processing", activeJob->getCommand().c_str());
-                    serial2->print(activeJob->getCommand());
+                    serial2->write(activeJob->getCommand().c_str());
                     if (activeJob->getCommandType() != CommandType::NoReply)
                     {
                         LOG(DEBUG_JOBS, "[Idle] Job requires reply.");
@@ -89,7 +121,7 @@ void loop()
                 // Command was sent, we are awaiting a reply from the mount.
                 //ASSERT(activeJob!==nullptr);
                 String reply = processSerialFromMount(activeJob, serial2);
-                if (!reply.isEmpty())
+                if (!reply.length() == 0)
                 {
                     if (activeJob->getSource() == JobSource::FromClient)
                     {
@@ -115,5 +147,26 @@ void loop()
                 }
             }
             break;
+    }
+}
+
+
+//--------------------------------------------------------------------+
+// TinyUSB Host callbacks
+//--------------------------------------------------------------------+
+extern "C" {
+
+    // Invoked when a device with CDC interface is mounted
+    // idx is index of cdc interface in the internal pool.
+    void tuh_cdc_mount_cb(uint8_t idx) {
+        // bind SerialHost object to this interface index
+        SerialHost.mount(idx);
+        Serial.println("SerialHost is connected to a new CDC device");
+    }
+
+    // Invoked when a device with CDC interface is unmounted
+    void tuh_cdc_umount_cb(uint8_t idx) {
+        SerialHost.umount(idx);
+        Serial.println("SerialHost is disconnected");
     }
 }

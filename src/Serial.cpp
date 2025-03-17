@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WString.h>
 
+#include "Serial.hpp"
 #include "MessageJob.hpp"
 
 // Handle the commands coming from a client app like OATControl or ASCOM
@@ -34,7 +35,7 @@ MessageJob* processSerialFromClient()
 }
 
 // Handle the command replies coming from the mount
-String processSerialFromMount(MessageJob* activeJob, SoftwareSerial* serialPort)
+String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort)
 {
     static String replyAccumulator = "";
     static bool firstHash = true;
@@ -85,7 +86,7 @@ String processSerialFromMount(MessageJob* activeJob, SoftwareSerial* serialPort)
                 }
                 break;
         }
-        if (!reply.isEmpty())
+        if (!reply.length() == 0)
         {
             // If we have a reply, return even if there are more serial characters waiting.... they are not from this job.
             break;

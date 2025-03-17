@@ -10,7 +10,8 @@
 
 int freeMemory()
 {
-    return ESP.getFreeHeap();
+    // return ESP.getFreeHeap();
+    return 0;
 }
 
 #if DEBUG_LEVEL > 0
