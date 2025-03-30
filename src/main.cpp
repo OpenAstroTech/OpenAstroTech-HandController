@@ -1,18 +1,20 @@
 #include <Arduino.h>
 #include <WString.h>
 
+#include "configuration.hpp"
 #include "MessageJob.hpp"
 #include "Controller.hpp"
 #include "Joystick.hpp"
+#if INFO_DISPLAY == 1
+#include "InfoDisplay.hpp"
+#endif
 #include "Serial.hpp"
 #include "SerialUSBHost.hpp"
+
 // USBHost is defined in usbh_helper.h
-//#include "usbh_helper.h"
-#include "USBSerialInputDevice.hpp"
+#include "usbh_helper.h"
 
 #define SERIAL_BAUDRATE 19200
-#define D5 14
-#define D6 12
 
 enum AppState
 {
@@ -27,11 +29,14 @@ AppState currentState;
 JobQueue jobQueue;
 MessageJob* activeJob = nullptr;
 
-USBSerialInputDevice* usbSerialDevice = new USBSerialInputDevice();
-IInputDevice* device = usbSerialDevice;
-//ISerial* serial2 = new SerialUsbHost(&SerialHost);
-//IInputDevice* device = new Joystick(15, 16);
-Controller controller(device);
+// IInputDevice* device = usbSerialDevice;
+ISerial* mountSerial = new SerialUsbHost(&SerialHost);
+IInputDevice* device = new Joystick(15, 16);
+Controller* controller = new Controller(device);
+
+#if INFO_DISPLAY == 1
+InfoDisplayRender* display = new InfoDisplay();
+#endif
 
 //------------- Core1 -------------//
 void setup1() {
@@ -44,26 +49,36 @@ void setup1() {
     USBHost.begin(1);
 
     // Initialize SerialHost
-//     SerialHost.begin(115200);
+    mountSerial->begin(19200);
 }
 
 void loop1() {
-    if (usbSerialDevice->isConnected()) {
-        // Use USB serial for mount communication instead of SoftwareSerial
-        // You would need to adapt the code to use usbSerialDevice->write() 
-        // and usbSerialDevice->readString() in place of serial2
-    }
+    USBHost.task();
 }
 
 //------------- Core0 -------------//
+
 void setup()
 {
+    delay(1000);
     currentState = AppState::AppIdle;
-    // serial2 = new SoftwareSerial(D5, D6);
     Serial.begin(SERIAL_BAUDRATE);
-    serial2->begin(SERIAL_BAUDRATE);
-    // pinMode(LED_BUILTIN, OUTPUT);
+    Serial.println("OAT-HC booting.");
+    for (int i = 0;i < 5;i++)
+    {
+        delay(100);
+        Serial.print(".");
+    }
+    Serial.println("OAT-HC started.");
+    delay(1000);
+#if INFO_DISPLAY == 1
+
+    display->init();
+    Serial.println("Display initialized.");
+#endif
 }
+
+long lastRender = 0;
 
 void loop()
 {
@@ -78,7 +93,7 @@ void loop()
     }
 
     // Check if the controller has a job for us
-    job = controller.timeslice();
+    job = controller->timeslice();
     if (job != nullptr)
     {
         // digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
@@ -98,15 +113,27 @@ void loop()
                 {
                     activeJob = jobQueue.dequeue();
                     LOG(DEBUG_JOBS, "[Idle] Job [%s] dequeued and processing", activeJob->getCommand().c_str());
-                    serial2->write(activeJob->getCommand().c_str());
-                    if (activeJob->getCommandType() != CommandType::NoReply)
+                    if (mountSerial->connected())
                     {
-                        LOG(DEBUG_JOBS, "[Idle] Job requires reply.");
-                        currentState = AppState::AwaitingCommandReply;
+                        LOG(DEBUG_JOBS, "[Idle] Sending command to mount.");
+                        mountSerial->write(activeJob->getCommand().c_str(), activeJob->getCommand().length());
+                        if (activeJob->getCommandType() != CommandType::NoReply)
+                        {
+                            LOG(DEBUG_JOBS, "[Idle] Job requires reply.");
+                            currentState = AppState::AwaitingCommandReply;
+                        }
+                        else
+                        {
+                            LOG(DEBUG_JOBS, "[Idle] Job does NOT require reply.");
+                            // Stay in Idle mode to retrieve next job
+                            delete activeJob;
+                            activeJob = nullptr;
+                            // digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+                        }
                     }
                     else
                     {
-                        LOG(DEBUG_JOBS, "[Idle] Job does NOT require reply.");
+                        LOG(DEBUG_JOBS, "[Idle] Mount not connected, cannot send command.");
                         // Stay in Idle mode to retrieve next job
                         delete activeJob;
                         activeJob = nullptr;
@@ -120,7 +147,7 @@ void loop()
             {
                 // Command was sent, we are awaiting a reply from the mount.
                 //ASSERT(activeJob!==nullptr);
-                String reply = processSerialFromMount(activeJob, serial2);
+                String reply = processSerialFromMount(activeJob, mountSerial);
                 if (!reply.length() == 0)
                 {
                     if (activeJob->getSource() == JobSource::FromClient)
@@ -130,7 +157,7 @@ void loop()
                         if (activeJob->getCommand() == "GX")
                         {
                             // Let controller know the last state (since it's free here)
-                            controller.setLastGX(reply, millis());
+                            controller->setLastGX(reply, millis());
                         }
                         Serial.print(reply);
                     }
@@ -138,7 +165,7 @@ void loop()
                     {
                         LOG(DEBUG_JOBS, "[AwaitReply] Received reply [%s], sending to controller.", reply.c_str());
                         // Send to controller
-                        controller.setReply(reply);
+                        controller->setReply(reply);
                     }
                     currentState = AppState::AppIdle;
                     delete activeJob;
@@ -148,6 +175,16 @@ void loop()
             }
             break;
     }
+
+#if INFO_DISPLAY == 1
+
+    // Run the display
+    if (lastRender + 50 < millis())
+    {
+        display->render();
+        lastRender = millis();
+    }
+#endif
 }
 
 
@@ -161,12 +198,12 @@ extern "C" {
     void tuh_cdc_mount_cb(uint8_t idx) {
         // bind SerialHost object to this interface index
         SerialHost.mount(idx);
-        Serial.println("SerialHost is connected to a new CDC device");
+        // Serial.println("SerialHost is connected to a new CDC device");
     }
 
     // Invoked when a device with CDC interface is unmounted
     void tuh_cdc_umount_cb(uint8_t idx) {
         SerialHost.umount(idx);
-        Serial.println("SerialHost is disconnected");
+        // Serial.println("SerialHost is disconnected");
     }
 }

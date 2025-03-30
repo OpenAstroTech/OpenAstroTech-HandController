@@ -40,9 +40,10 @@ String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort)
     static String replyAccumulator = "";
     static bool firstHash = true;
     String reply = "";
-    while (serialPort->available() > 0)
+    while (serialPort->connected() && serialPort->available() > 0)
     {
-        char ch = serialPort->read();
+        char ch;
+        serialPort->read(&ch,1);
         switch (activeJob->getCommandType())
         {
             case CommandType::NoReply:

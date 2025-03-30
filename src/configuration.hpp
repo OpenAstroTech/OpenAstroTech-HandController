@@ -4,3 +4,5 @@
 #define DEBUG_SERIAL_PORT Serial
 
 #define DEBUG_LEVEL (DEBUG_ANY)
+
+#define INFO_DISPLAY 0
