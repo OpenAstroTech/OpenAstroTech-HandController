@@ -137,6 +137,44 @@ void test_controller_job_reply_routed_to_controller()
     TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());  // not leaked to the client
 }
 
+void test_stale_mount_bytes_are_discarded_while_idle()
+{
+    resetPipeline();
+    // A late reply from an earlier (timed-out) job is sitting in the buffer.
+    mount.feed("OpenAstroMount#");
+
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromClient));
+    tick();  // idle: must discard the stale bytes, then send :GX#
+    TEST_ASSERT_EQUAL_STRING(":GX#", mount.written.c_str());
+
+    tick();  // nothing new from the mount: stale bytes must not pass as a reply
+    TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());
+
+    mount.feed("Tracking,--T---,0,0,1,090008,+900000,,#");
+    tick();
+    TEST_ASSERT_EQUAL_STRING("Tracking,--T---,0,0,1,090008,+900000,,#", Serial.output.c_str());
+}
+
+void test_late_reply_after_timeout_does_not_poison_next_job()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":GVP#", JobSource::FromClient));
+
+    tick();  // send :GVP#
+    fake_millis += REPLY_TIMEOUT_MS + 1;
+    tick();  // timeout drops the job
+
+    mount.feed("OpenAstroMount#");  // the late reply arrives while idle
+    tick();                         // idle tick: must drain it
+
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromClient));
+    tick();  // send :GX# into a clean buffer
+
+    mount.feed("Tracking,--T---,0,0,1,090008,+900000,,#");
+    tick();
+    TEST_ASSERT_EQUAL_STRING("Tracking,--T---,0,0,1,090008,+900000,,#", Serial.output.c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -146,5 +184,7 @@ int main()
     RUN_TEST(test_disconnected_mount_times_out);
     RUN_TEST(test_client_reply_forwarded_and_gx_cached);
     RUN_TEST(test_controller_job_reply_routed_to_controller);
+    RUN_TEST(test_stale_mount_bytes_are_discarded_while_idle);
+    RUN_TEST(test_late_reply_after_timeout_does_not_poison_next_job);
     return UNITY_END();
 }

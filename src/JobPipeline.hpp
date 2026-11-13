@@ -36,6 +36,17 @@ public:
         {
             case AppState::AppIdle:
                 {
+                    // Discard any mount bytes that arrived while no job was
+                    // awaiting (late replies to timed-out jobs, or
+                    // unsolicited output): leaving them in the buffer would
+                    // let the next job misread them as its own reply.
+                    while (_mountSerial->available() > 0)
+                    {
+                        char stale = 0;
+                        _mountSerial->read(&stale, 1);
+                        LOG(DEBUG_MOUNT, "[Idle] Discarding stale mount byte while idle.");
+                    }
+
                     if (jobQueue.hasJob())
                     {
                         _activeJob = jobQueue.dequeue();
