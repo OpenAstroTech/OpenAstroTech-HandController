@@ -10,7 +10,9 @@ const uint8_t sineTable[] PROGMEM = { 0, 22, 44, 66, 87, 108, 128, 146, 164, 180
 // This class renders the mount status to a 128x64 pixel display controlled by a SSD1306 chip.
 class SDD1306OLED128x64 : public InfoDisplayRender
 {
+protected:
     SSD1306Wire* display;
+
     int yMaxStatus;
     int _addr;
     int _sda;

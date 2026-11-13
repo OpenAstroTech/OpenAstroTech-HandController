@@ -10,6 +10,7 @@ enum class KeyPress {
     Down,
     Left,
     Right,
+    Select
 };
 
 enum class Capabilities {

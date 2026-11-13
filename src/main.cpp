@@ -29,8 +29,36 @@ Controller* controller = new Controller(device);
 JobPipeline* pipeline = new JobPipeline(mountSerial, controller);
 
 #if INFO_DISPLAY == 1
-InfoDisplayRender* display = new InfoDisplay();
+InfoDisplay* display = new InfoDisplay();
 #endif
+
+// Example menu action functions
+void actionGoto() {
+    Serial.println("Goto selected");
+}
+
+void actionAlign() {
+    Serial.println("Align selected");
+}
+
+void actionSettings() {
+    Serial.println("Settings selected");
+}
+
+// Number input action functions
+void handleSpeed(float speed) {
+    Serial.print("Speed set to: ");
+    Serial.println(speed);
+    // Here you would send the speed command to the mount
+    // e.g., mountSerial->write(":S" + String(speed) + "#");
+}
+
+void handleBacklash(float backlash) {
+    Serial.print("Backlash set to: ");
+    Serial.println(backlash);
+    // Here you would send the backlash command to the mount
+    // e.g., mountSerial->write(":B" + String(backlash) + "#");
+}
 
 //------------- Core1 -------------//
 void setup1() {
@@ -65,9 +93,21 @@ void setup()
     Serial.println("OAT-HC started.");
     delay(1000);
 #if INFO_DISPLAY == 1
-
     display->init();
     Serial.println("Display initialized.");
+    
+    // Initialize menu system
+    display->initMenu();
+    
+    // Add menu items
+    display->addMenuItem("Goto", actionGoto);
+    display->addMenuItem("Align", actionAlign);
+    
+    // Add number input menu items
+    display->addNumberMenuItem("Speed", 0.1, 9.9, 0.1, 1.0, handleSpeed);
+    display->addNumberMenuItem("Backlash", 0, 999, 1, 0, handleBacklash);
+    
+    display->addMenuItem("Settings", actionSettings);
 #endif
 }
 
@@ -79,9 +119,7 @@ void loop()
     MessageJob* job = processSerialFromClient();
     if (job != nullptr)
     {
-        // digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
         LOG(DEBUG_JOBS, "Received Job: [%s] from client", job->getCommand().c_str());
-        // Yes, so put it in the queue
         jobQueue.enqueue(job);
     }
 
@@ -89,17 +127,37 @@ void loop()
     job = controller->timeslice();
     if (job != nullptr)
     {
-        // digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
         LOG(DEBUG_JOBS, "Received Job: [%s] from controller", job->getCommand().c_str());
-        // Yes, so put it in the queue as well
         jobQueue.enqueue(job);
     }
 
-    // Process one job against the mount (sends it, awaits and routes the reply).
+    // Handle joystick input for menu navigation
+    #if (INFO_DISPLAY == 1)
+    KeyPress key;
+    if (device->isKeyPressed(key)) {
+        switch (key) {
+            case KeyPress::Up:
+                display->navigateUp();
+                break;
+            case KeyPress::Down:
+                display->navigateDown();
+                break;
+            case KeyPress::Left:
+                display->navigateLeft();
+                break;
+            case KeyPress::Right:
+                display->select();
+                break;
+            default:
+                break;
+        }
+    }
+    #endif
+
+    // Process one job against the mount (sends, awaits and routes the reply).
     pipeline->tick(jobQueue);
 
 #if INFO_DISPLAY == 1
-
     // Run the display
     if (lastRender + 50 < millis())
     {
