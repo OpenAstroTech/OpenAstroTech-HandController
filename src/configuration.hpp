@@ -5,7 +5,7 @@
 
 // Guards allow build flags (e.g. the native test env) to override these.
 #ifndef DEBUG_LEVEL
-#define DEBUG_LEVEL (DEBUG_ANY)
+#define DEBUG_LEVEL (DEBUG_NONE)
 #endif
 
 #ifndef INFO_DISPLAY
