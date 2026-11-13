@@ -178,12 +178,27 @@ extern "C" {
     void tuh_cdc_mount_cb(uint8_t idx) {
         // bind SerialHost object to this interface index
         SerialHost.mount(idx);
-        // Serial.println("SerialHost is connected to a new CDC device");
+        LOG(DEBUG_CTRL, "SerialHost is connected to a new CDC device.");
     }
 
     // Invoked when a device with CDC interface is unmounted
     void tuh_cdc_umount_cb(uint8_t idx) {
         SerialHost.umount(idx);
-        // Serial.println("SerialHost is disconnected");
+        LOG(DEBUG_CTRL, "SerialHost is disconnected.");
+    }
+
+    // Device-level attach/detach logging: shows whether a device enumerates
+    // on the host port at all, independent of any class driver binding.
+    void tuh_mount_cb(uint8_t daddr) {
+        uint16_t vid, pid;
+        if (tuh_vid_pid_get(daddr, &vid, &pid)) {
+            LOG(DEBUG_CTRL, "USB device mounted: %04x:%04x", vid, pid);
+        } else {
+            LOG(DEBUG_CTRL, "USB device mounted (no vid/pid).");
+        }
+    }
+
+    void tuh_umount_cb(uint8_t daddr) {
+        LOG(DEBUG_CTRL, "USB device unmounted: addr %d", daddr);
     }
 }
