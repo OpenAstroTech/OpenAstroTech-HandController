@@ -4,6 +4,7 @@
 #include "configuration.hpp"
 #include "MessageJob.hpp"
 #include "Controller.hpp"
+#include "JobPipeline.hpp"
 #include "Joystick.hpp"
 #if INFO_DISPLAY == 1
 #include "InfoDisplay.hpp"
@@ -16,23 +17,16 @@
 
 #define SERIAL_BAUDRATE 19200
 
-enum AppState
-{
-    AppIdle,
-    AwaitingCommandReply,
-};
-
 Adafruit_USBH_CDC SerialHost;
 tusb_desc_device_t desc_device;
 
-AppState currentState;
 JobQueue jobQueue;
-MessageJob* activeJob = nullptr;
 
 // IInputDevice* device = usbSerialDevice;
 ISerial* mountSerial = new SerialUsbHost(&SerialHost);
 IInputDevice* device = new Joystick(15, 16);
 Controller* controller = new Controller(device);
+JobPipeline* pipeline = new JobPipeline(mountSerial, controller);
 
 #if INFO_DISPLAY == 1
 InfoDisplayRender* display = new InfoDisplay();
@@ -61,7 +55,6 @@ void loop1() {
 void setup()
 {
     delay(1000);
-    currentState = AppState::AppIdle;
     Serial.begin(SERIAL_BAUDRATE);
     Serial.println("OAT-HC booting.");
     for (int i = 0;i < 5;i++)
@@ -102,79 +95,8 @@ void loop()
         jobQueue.enqueue(job);
     }
 
-    // See what we're currently doing.
-    switch (currentState)
-    {
-        case AppState::AppIdle:
-            {
-                // Currently no job is being processed, so check if one is pending and if so, dequeue, send it and await a reply if needed.
-                // ASSERT(activeJob == nullptr);
-                if (jobQueue.hasJob())
-                {
-                    activeJob = jobQueue.dequeue();
-                    LOG(DEBUG_JOBS, "[Idle] Job [%s] dequeued and processing", activeJob->getCommand().c_str());
-                    if (mountSerial->connected())
-                    {
-                        LOG(DEBUG_JOBS, "[Idle] Sending command to mount.");
-                        mountSerial->write(activeJob->getCommand().c_str(), activeJob->getCommand().length());
-                        if (activeJob->getCommandType() != CommandType::NoReply)
-                        {
-                            LOG(DEBUG_JOBS, "[Idle] Job requires reply.");
-                            currentState = AppState::AwaitingCommandReply;
-                        }
-                        else
-                        {
-                            LOG(DEBUG_JOBS, "[Idle] Job does NOT require reply.");
-                            // Stay in Idle mode to retrieve next job
-                            delete activeJob;
-                            activeJob = nullptr;
-                            // digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-                        }
-                    }
-                    else
-                    {
-                        LOG(DEBUG_JOBS, "[Idle] Mount not connected, cannot send command.");
-                        // Stay in Idle mode to retrieve next job
-                        delete activeJob;
-                        activeJob = nullptr;
-                        // digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-                    }
-                }
-            }
-            break;
-
-        case AppState::AwaitingCommandReply:
-            {
-                // Command was sent, we are awaiting a reply from the mount.
-                //ASSERT(activeJob!==nullptr);
-                String reply = processSerialFromMount(activeJob, mountSerial);
-                if (!reply.length() == 0)
-                {
-                    if (activeJob->getSource() == JobSource::FromClient)
-                    {
-                        LOG(DEBUG_JOBS, "[AwaitReply] Received reply [%s], sending to client.", reply.c_str());
-                        // Send back to client
-                        if (activeJob->getCommand() == "GX")
-                        {
-                            // Let controller know the last state (since it's free here)
-                            controller->setLastGX(reply, millis());
-                        }
-                        Serial.print(reply);
-                    }
-                    else if (activeJob->getSource() == JobSource::FromController)
-                    {
-                        LOG(DEBUG_JOBS, "[AwaitReply] Received reply [%s], sending to controller.", reply.c_str());
-                        // Send to controller
-                        controller->setReply(reply);
-                    }
-                    currentState = AppState::AppIdle;
-                    delete activeJob;
-                    activeJob = nullptr;
-                    // digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-                }
-            }
-            break;
-    }
+    // Process one job against the mount (sends it, awaits and routes the reply).
+    pipeline->tick(jobQueue);
 
 #if INFO_DISPLAY == 1
 

@@ -24,4 +24,8 @@ public:
     MessageJob* timeslice();
     void setReply(String reply);
     void setLastGX(String status, long timestamp);
+
+    String getReply() const { return _commandReply; }
+    String getLastGX() const { return _lastGX; }
+    long getLastGXTime() const { return _lastGXTime; }
 };

@@ -76,7 +76,7 @@ String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort)
                     }
                     else
                     {
-                        reply = replyAccumulator + "ch";
+                        reply = replyAccumulator + "#";
                         replyAccumulator = "";
                         firstHash = true;
                     }

@@ -63,17 +63,19 @@ public:
         _xPos = _xPosTotal / SMOOTHEN_WINDOW_SIZE;
         _yPos = _yPosTotal / SMOOTHEN_WINDOW_SIZE;
 
+        // Positions are centered (-0.5..+0.5); a key is generated when an
+        // axis deflects past KEY_THRESHOLD from center.
         if (_currentKey == KeyPress::None) {
-            if (_xPos < KEY_THRESHOLD) {
+            if (_xPos < -KEY_THRESHOLD) {
                 _currentKey = KeyPress::Left;
             }
-            else if (_xPos > (1.0 - KEY_THRESHOLD)) {
+            else if (_xPos > KEY_THRESHOLD) {
                 _currentKey = KeyPress::Right;
             }
-            if (_yPos < KEY_THRESHOLD) {
+            if (_yPos < -KEY_THRESHOLD) {
                 _currentKey = KeyPress::Up;
             }
-            else if (_yPos > (1.0 - KEY_THRESHOLD)) {
+            else if (_yPos > KEY_THRESHOLD) {
                 _currentKey = KeyPress::Down;
             }
             // If we changed state, remember when...
@@ -91,8 +93,8 @@ public:
         }
     };
 
-    virtual float rawY() { return _xPos; };
-    virtual float rawX() { return _yPos; };
+    virtual float rawX() { return _xPos; };
+    virtual float rawY() { return _yPos; };
 
     // Returns true if a key has been pressed since last call.
     virtual bool isKeyPressed(KeyPress& pressed)
