@@ -10,8 +10,11 @@
 
 int freeMemory()
 {
-    // return ESP.getFreeHeap();
-    return 0;
+#ifdef ARDUINO_ARCH_RP2040
+    return rp2040.getFreeHeap();
+#else
+    return 0;  // host/test builds: no RP2040 heap accounting
+#endif
 }
 
 #if DEBUG_LEVEL > 0
