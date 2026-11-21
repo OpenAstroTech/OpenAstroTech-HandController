@@ -5,9 +5,14 @@
 #include "MessageJob.hpp"
 #include "Controller.hpp"
 #include "JobPipeline.hpp"
-#include "Joystick.hpp"
+#include "InputDevice.hpp"
 #if INFO_DISPLAY == 1
-#include "InfoDisplay.hpp"
+#include "SSD1306_128x64_Display.hpp"
+#include "MenuCommands.hpp"
+#include "Menu/MenuNavigator.hpp"
+#include "Menu/MenuParser.hpp"
+#include "Menu/RotaryEncoderInput.hpp"
+#include "Version.h"
 #endif
 #include "Serial.hpp"
 #include "SerialUSBHost.hpp"
@@ -22,43 +27,107 @@ tusb_desc_device_t desc_device;
 
 JobQueue jobQueue;
 
-// IInputDevice* device = usbSerialDevice;
 ISerial* mountSerial = new SerialUsbHost(&SerialHost);
-IInputDevice* device = new Joystick(15, 16);
+// On-device input is the menu's rotary encoder; the controller has no input
+// device of its own (yet).
+IInputDevice* device = new NullInputDevice();
 Controller* controller = new Controller(device);
 JobPipeline* pipeline = new JobPipeline(mountSerial, controller);
 
 #if INFO_DISPLAY == 1
-InfoDisplay* display = new InfoDisplay();
+SDD1306OLED128x64* lcd = nullptr;
+RotaryEncoder* rotaryInput = nullptr;
+MenuNavigator* menuNav = nullptr;
+bool waitForSelectRelease = false;
+long lastRender = 0;
+
+// Declarative menu definition (grammar: OledMenu docs/menu-format.md).
+// Ids must match the MenuCommandId enum in MenuCommands.hpp.
+static String buildMenuDef()
+{
+    String def = F(
+        "Menu, 1, \"HandController\"\n"
+        "  Submenu, 10, \"Move\"\n"
+        "    Action, 11, \"North\"\n"
+        "    Action, 12, \"South\"\n"
+        "    Action, 13, \"East\"\n"
+        "    Action, 14, \"West\"\n"
+        "    Action, 15, \"Stop\"\n"
+        "  Submenu, 20, \"Slew rate\"\n"
+        "    Select, 21, \"Rate\"\n"
+        "      Option, \"Guide\"\n"
+        "      Option, \"Center\"\n"
+        "      Option, \"Find\"\n"
+        "      Option, \"Max\"\n"
+        "  Action, 30, \"Park\"\n"
+        "  Action, 31, \"Unpark\"\n"
+        "  Action, 32, \"Find home\"\n"
+        "  Submenu, 40, \"About\"\n"
+        "    Label, 41, \"");
+    def += VERSION;
+    def += F("\"\n"
+             "  Action, 99, \"Exit\"\n");
+    return def;
+}
+
+// Single activity callback from the menu: route "id|value" payloads to mount
+// commands through the job pipeline, or handle UI-only items (Exit) here.
+static void onMenuActivity(const char* payload)
+{
+    uint16_t id = 0;
+    const char* value = nullptr;
+    if (!parseMenuPayload(payload, &id, &value))
+    {
+        return;
+    }
+
+    if (id == ID_MENU_EXIT)
+    {
+        menuNav->setActive(false);
+        waitForSelectRelease = true;
+        return;
+    }
+
+    const char* command = menuIdToCommand(id);
+    if (command == nullptr && id == ID_RATE_SLEW)
+    {
+        command = rateOptionToCommand(value);
+    }
+    if (command != nullptr)
+    {
+        LOG(DEBUG_JOBS, "Menu id %d -> %s", (int) id, command);
+        jobQueue.enqueue(new MessageJob(command, JobSource::FromController));
+    }
+}
+
+// Idle screen while the menu is closed: mount link state plus the last known
+// mount status (populated whenever a client polls :GX#).
+static void renderStatusScreen()
+{
+    lcd->clear();
+    lcd->drawString(0, 0, "OAT HC " VERSION);
+    lcd->drawString(0, 10, mountSerial->connected() ? "Mount: connected" : "Mount: --");
+
+    String status = controller->getLastGX();
+    int y    = 20;
+    int from = 0;
+    for (int line = 0; line < 5 && from < (int) status.length(); line++)
+    {
+        int to = status.indexOf(',', from);
+        if (to == -1)
+        {
+            to = status.length();
+        }
+        String field = status.substring(from, to);
+        field.replace("#", "");
+        lcd->drawString(0, y, field.c_str());
+        y += 9;
+        from = to + 1;
+    }
+
+    lcd->display();
+}
 #endif
-
-// Example menu action functions
-void actionGoto() {
-    Serial.println("Goto selected");
-}
-
-void actionAlign() {
-    Serial.println("Align selected");
-}
-
-void actionSettings() {
-    Serial.println("Settings selected");
-}
-
-// Number input action functions
-void handleSpeed(float speed) {
-    Serial.print("Speed set to: ");
-    Serial.println(speed);
-    // Here you would send the speed command to the mount
-    // e.g., mountSerial->write(":S" + String(speed) + "#");
-}
-
-void handleBacklash(float backlash) {
-    Serial.print("Backlash set to: ");
-    Serial.println(backlash);
-    // Here you would send the backlash command to the mount
-    // e.g., mountSerial->write(":B" + String(backlash) + "#");
-}
 
 //------------- Core1 -------------//
 void setup1() {
@@ -93,25 +162,30 @@ void setup()
     Serial.println("OAT-HC started.");
     delay(1000);
 #if INFO_DISPLAY == 1
-    display->init();
+    // Created here (not as global objects) so the display and encoder pins
+    // are configured after the core is initialized.
+    lcd = new SDD1306OLED128x64(DISPLAY_SSD1306_I2C_ADDRESS, SDA, SCL);
+    lcd->init();
     Serial.println("Display initialized.");
-    
-    // Initialize menu system
-    display->initMenu();
-    
-    // Add menu items
-    display->addMenuItem("Goto", actionGoto);
-    display->addMenuItem("Align", actionAlign);
-    
-    // Add number input menu items
-    display->addNumberMenuItem("Speed", 0.1, 9.9, 0.1, 1.0, handleSpeed);
-    display->addNumberMenuItem("Backlash", 0, 999, 1, 0, handleBacklash);
-    
-    display->addMenuItem("Settings", actionSettings);
+
+    rotaryInput = new RotaryEncoder(ROTARY_ENCODER_CLK_PIN, ROTARY_ENCODER_DT_PIN, ROTARY_ENCODER_SW_PIN);
+
+    DefaultMenuBuilder menuBuilder;
+    if (MenuParser::parse(buildMenuDef().c_str(), &menuBuilder)
+        && !menuBuilder.hadError()
+        && menuBuilder.getRootMenu() != nullptr)
+    {
+        menuBuilder.getRootMenu()->setOnMenuActivity(onMenuActivity);
+        menuNav = new MenuNavigator(menuBuilder.getRootMenu(), rotaryInput, lcd);
+        menuNav->setActive(false);
+        Serial.println("Menu initialized.");
+    }
+    else
+    {
+        Serial.println("Menu parse failed.");
+    }
 #endif
 }
-
-long lastRender = 0;
 
 void loop()
 {
@@ -131,38 +205,42 @@ void loop()
         jobQueue.enqueue(job);
     }
 
-    // Handle joystick input for menu navigation
-    #if (INFO_DISPLAY == 1)
-    KeyPress key;
-    if (device->isKeyPressed(key)) {
-        switch (key) {
-            case KeyPress::Up:
-                display->navigateUp();
-                break;
-            case KeyPress::Down:
-                display->navigateDown();
-                break;
-            case KeyPress::Left:
-                display->navigateLeft();
-                break;
-            case KeyPress::Right:
-                display->select();
-                break;
-            default:
-                break;
-        }
-    }
-    #endif
-
     // Process one job against the mount (sends, awaits and routes the reply).
     pipeline->tick(jobQueue);
 
 #if INFO_DISPLAY == 1
-    // Run the display
-    if (lastRender + 50 < millis())
+    if (menuNav != nullptr)
     {
-        display->render();
-        lastRender = millis();
+        // Poll the encoder every loop: its debounce needs frequent samples
+        // and the loop is non-blocking.
+        rotaryInput->realTimeUpdate();
+
+        if (!menuNav->isActive())
+        {
+            // A click opens the menu; wait for the release so the opening
+            // click doesn't immediately register as SELECT.
+            if (rotaryInput->isSelectPressed() && !waitForSelectRelease)
+            {
+                menuNav->setActive(true);
+            }
+            else if (!rotaryInput->isSelectPressed() && waitForSelectRelease)
+            {
+                waitForSelectRelease = false;
+            }
+        }
+
+        if (menuNav->update() && menuNav->isActive())
+        {
+            lcd->clear();
+            menuNav->render();
+            lcd->display();
+            lastRender = millis();
+        }
+        else if (!menuNav->isActive() && lastRender + 250 < millis())
+        {
+            renderStatusScreen();
+            lastRender = millis();
+        }
     }
 #endif
 }

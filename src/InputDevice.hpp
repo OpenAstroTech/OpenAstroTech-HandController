@@ -50,3 +50,14 @@ public:
     virtual float rawY() = 0;
     virtual float rawX() = 0;
 };
+
+// Input no-op: on-device input is handled by the menu's rotary encoder, so
+// the controller currently has no input device of its own.
+class NullInputDevice : public IInputDevice {
+public:
+    void timeSlice() override {}
+    Capabilities supportedCapabilities() override { return Capabilities::RawInput; }
+    bool isKeyPressed(KeyPress& pressed) override { (void) pressed; return false; }
+    float rawY() override { return 0; }
+    float rawX() override { return 0; }
+};
