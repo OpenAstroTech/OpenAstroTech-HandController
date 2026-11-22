@@ -16,7 +16,7 @@ PlatformIO is the build system (VSCode + PlatformIO extension is the expected de
 - Clean: `pio run -t clean`
 - Unit tests (host, no hardware): `pio test -e native`; single suite: `pio test -e native -f test_menu_dispatch`
 
-The platform is pulled from a fork (`maxgerhardt/platform-raspberrypi`) and library dependencies download into `.pio/libdeps/` on first build — never edit anything under `.pio/`. Note: the `OledMenu` library is pinned by tag (`#v0.1.0`) and transitively pulls the SSD1306 OLED driver (`#4.6.2`) through its `library.json` — do not also declare the OLED driver in `lib_deps`, or it installs twice under two names and duplicate symbols break the link. The library itself lives at `github.com/ClutchplateDude/OledMenu` (local checkout: `../OledMenu`).
+The platform is pulled from a fork (`maxgerhardt/platform-raspberrypi`) and library dependencies download into `.pio/libdeps/` on first build — never edit anything under `.pio/`. Note: the `OledMenu` library is pinned by tag (`#v0.3.0`) and transitively pulls the SSD1306 OLED driver (`#4.6.2`) through its `library.json` — do not also declare the OLED driver in `lib_deps`, or it installs twice under two names and duplicate symbols break the link. The library itself lives at `github.com/ClutchplateDude/OledMenu` (local checkout: `../OledMenu`).
 
 ### Native unit tests
 
@@ -60,7 +60,7 @@ The idle status screen stays fresh via `StatusRefresher` (`src/StatusRefresher.h
 
 ### Menu & display stack (OledMenu library, gated by `INFO_DISPLAY`, currently ON)
 
-The menu system is the shared **OledMenu** library (`github.com/ClutchplateDude/OledMenu`, pinned `#v0.1.0` in `platformio.ini`): item types, `MenuNavigator` (scrolling, edit modes, 750 ms long-press), a declarative text-format `MenuParser`, the poll-based `InputDevice` interface with `RotaryEncoderInput`, and the `InfoDisplayRender` drawing surface (fonts/icons included). Develop library changes in the `../OledMenu` checkout, tag, and bump the pin here.
+The menu system is the shared **OledMenu** library (`github.com/ClutchplateDude/OledMenu`, pinned `#v0.3.0` in `platformio.ini`): item types, `MenuNavigator` (scrolling, edit modes, 750 ms long-press), a declarative text-format `MenuParser`, the poll-based `InputDevice` interface with `RotaryEncoderInput`, and the `InfoDisplayRender` drawing surface (fonts/icons included). Develop library changes in the `../OledMenu` checkout, tag, and bump the pin here.
 
 HandController-side wiring lives in `src/main.cpp` behind `INFO_DISPLAY`: a `MENU_DEF` string (grammar: OledMenu's `docs/menu-format.md`) parsed at boot, the rotary encoder on `ROTARY_*_PIN`s from `configuration.hpp` (placeholders until hardware is wired), and an idle status screen (mount link + last `:GX` status). A click opens the menu; `Exit` closes it. `src/MenuCommands.hpp` maps menu item ids to LX200 commands (host-tested in `test/test_menu_dispatch`) — only commands present in `MessageJob`'s lookup table may be dispatched. The concrete display class is `SDD1306OLED128x64` (`src/SSD1306_128x64_Display.hpp`) on I²C addr 0x3C.
 
