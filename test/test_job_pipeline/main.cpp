@@ -137,6 +137,22 @@ void test_controller_job_reply_routed_to_controller()
     TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());  // not leaked to the client
 }
 
+void test_controller_gx_reply_is_cached_for_status_screen()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromController));
+
+    tick();
+    mount.feed("Tracking,--T---,0,0,1,090008,+900000,,#");
+    tick();
+
+    // Cached for the idle status screen (like client GX replies) ...
+    TEST_ASSERT_EQUAL_STRING("Tracking,--T---,0,0,1,090008,+900000,,#", controller->getLastGX().c_str());
+    // ... while still routed to the controller and not leaked to the client.
+    TEST_ASSERT_EQUAL_STRING("Tracking,--T---,0,0,1,090008,+900000,,#", controller->getReply().c_str());
+    TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());
+}
+
 void test_stale_mount_bytes_are_discarded_while_idle()
 {
     resetPipeline();
@@ -184,6 +200,7 @@ int main()
     RUN_TEST(test_disconnected_mount_times_out);
     RUN_TEST(test_client_reply_forwarded_and_gx_cached);
     RUN_TEST(test_controller_job_reply_routed_to_controller);
+    RUN_TEST(test_controller_gx_reply_is_cached_for_status_screen);
     RUN_TEST(test_stale_mount_bytes_are_discarded_while_idle);
     RUN_TEST(test_late_reply_after_timeout_does_not_poison_next_job);
     return UNITY_END();

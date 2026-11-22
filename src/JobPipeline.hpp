@@ -73,14 +73,17 @@ public:
                     String reply = processSerialFromMount(_activeJob, _mountSerial);
                     if (reply.length() > 0)
                     {
+                        // Cache status replies for both sources so the idle
+                        // status screen stays fresh whether a client polled
+                        // or we did (StatusRefresher).
+                        if (_activeJob->getCommand().startsWith(":GX"))
+                        {
+                            _controller->setLastGX(reply, millis());
+                        }
+
                         if (_activeJob->getSource() == JobSource::FromClient)
                         {
                             LOG(DEBUG_JOBS, "[AwaitReply] Received reply [%s], sending to client.", reply.c_str());
-                            // The stored command is the full ":GX#" form.
-                            if (_activeJob->getCommand().startsWith(":GX"))
-                            {
-                                _controller->setLastGX(reply, millis());
-                            }
                             Serial.print(reply);
                         }
                         else if (_activeJob->getSource() == JobSource::FromController)

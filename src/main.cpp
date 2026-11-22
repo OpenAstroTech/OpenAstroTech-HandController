@@ -9,6 +9,7 @@
 #if INFO_DISPLAY == 1
 #include "SSD1306_128x64_Display.hpp"
 #include "MenuCommands.hpp"
+#include "StatusRefresher.hpp"
 #include "Menu/MenuNavigator.hpp"
 #include "Menu/MenuParser.hpp"
 #include "Menu/RotaryEncoderInput.hpp"
@@ -38,6 +39,7 @@ JobPipeline* pipeline = new JobPipeline(mountSerial, controller);
 SDD1306OLED128x64* lcd = nullptr;
 RotaryEncoder* rotaryInput = nullptr;
 MenuNavigator* menuNav = nullptr;
+StatusRefresher statusRefresher(controller);
 bool waitForSelectRelease = false;
 long lastRender = 0;
 
@@ -194,6 +196,10 @@ void loop()
     if (job != nullptr)
     {
         LOG(DEBUG_JOBS, "Received Job: [%s] from client", job->getCommand().c_str());
+#if INFO_DISPLAY == 1
+        // Client presence drives the status-poll cadence (StatusRefresher).
+        statusRefresher.noteClientActivity(millis());
+#endif
         jobQueue.enqueue(job);
     }
 
@@ -238,6 +244,13 @@ void loop()
         }
         else if (!menuNav->isActive() && lastRender + 250 < millis())
         {
+            // Keep the idle status screen fresh: piggyback on client :GX#
+            // pass-throughs and only send our own poll when none has been
+            // seen for 2 s (StatusRefresher throttles this further).
+            if (mountSerial->connected() && statusRefresher.shouldRequest(millis()))
+            {
+                jobQueue.enqueue(new MessageJob(":GX#", JobSource::FromController));
+            }
             renderStatusScreen();
             lastRender = millis();
         }
