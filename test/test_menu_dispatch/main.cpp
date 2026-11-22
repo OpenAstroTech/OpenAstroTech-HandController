@@ -13,7 +13,8 @@ void test_move_ids_map_to_lx200_move_commands()
     TEST_ASSERT_EQUAL_STRING(":Ms#", menuIdToCommand(ID_MOVE_SOUTH));
     TEST_ASSERT_EQUAL_STRING(":Me#", menuIdToCommand(ID_MOVE_EAST));
     TEST_ASSERT_EQUAL_STRING(":Mw#", menuIdToCommand(ID_MOVE_WEST));
-    TEST_ASSERT_EQUAL_STRING(":Q#", menuIdToCommand(ID_MOVE_STOP));
+    // Stop ends the manual moves only; :Q# would also stop tracking.
+    TEST_ASSERT_EQUAL_STRING(":Qa#", menuIdToCommand(ID_MOVE_STOP));
 }
 
 void test_park_unpark_home_map_to_lx200_commands()

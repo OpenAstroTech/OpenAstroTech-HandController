@@ -28,7 +28,9 @@ enum MenuCommandId : uint16_t
 
 // Maps a menu item id to the LX200 command the mount should receive, or
 // nullptr when the id is a container/label/exit with no mount side effect.
-// Only commands from MessageJob's lookup table may be returned here.
+// Any LX200 command may be returned: MessageJob reads the reply of a command
+// it does not list as one '#'-terminated string, and its table holds only
+// the exceptions (no reply, one character).
 inline const char* menuIdToCommand(uint16_t id)
 {
     switch (id)
@@ -37,7 +39,8 @@ inline const char* menuIdToCommand(uint16_t id)
         case ID_MOVE_SOUTH: return ":Ms#";
         case ID_MOVE_EAST:  return ":Me#";
         case ID_MOVE_WEST:  return ":Mw#";
-        case ID_MOVE_STOP:  return ":Q#";
+        // Stops the manual moves only. :Q# would stop tracking as well.
+        case ID_MOVE_STOP:  return ":Qa#";
         case ID_MOUNT_PARK:   return ":hP#";
         case ID_MOUNT_UNPARK: return ":hU#";
         case ID_MOUNT_HOME:   return ":hF#";

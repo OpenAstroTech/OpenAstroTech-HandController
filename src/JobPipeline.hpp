@@ -7,8 +7,13 @@
 #include "Controller.hpp"
 #include "Utility.hpp"
 
-// Maximum time to wait for the mount to answer a job that expects a reply.
+// Maximum time to wait for a mount reply once it has started to arrive.
 const unsigned long REPLY_TIMEOUT_MS = 2000;
+
+// How long to wait when the mount has not sent a single byte. A mount that
+// answers does so within about 120 ms, so a command it does not implement -
+// or answers with nothing - must not cost the full timeout.
+const unsigned long NO_ANSWER_SILENCE_MS = 300;
 
 // Processes queued MessageJobs against the mount: one job in flight at a
 // time; replies are routed back to the job's source (client serial or the
@@ -62,6 +67,7 @@ public:
                         else
                         {
                             _awaitSince = millis();
+                            _replyStarted = false;
                             _currentState = AppState::AwaitingCommandReply;
                         }
                     }
@@ -70,7 +76,7 @@ public:
 
             case AppState::AwaitingCommandReply:
                 {
-                    String reply = processSerialFromMount(_activeJob, _mountSerial);
+                    String reply = processSerialFromMount(_activeJob, _mountSerial, &_replyStarted);
                     if (reply.length() > 0)
                     {
                         // Cache status replies for both sources so the idle
@@ -93,11 +99,13 @@ public:
                         }
                         finishJob(false);
                     }
-                    else if (millis() - _awaitSince > REPLY_TIMEOUT_MS)
+                    else if (millis() - _awaitSince > (_replyStarted ? REPLY_TIMEOUT_MS : NO_ANSWER_SILENCE_MS))
                     {
                         // Mount silent or disconnected: drop the job so the
-                        // pipeline keeps serving later jobs.
+                        // pipeline keeps serving later jobs. Whatever arrived
+                        // of an unfinished reply is dropped with it.
                         LOG(DEBUG_JOBS, "[AwaitReply] Timed out waiting for reply to [%s].", _activeJob->getCommand().c_str());
+                        discardPartialReply();
                         finishJob(true);
                     }
                 }
@@ -130,4 +138,5 @@ private:
     AppState _currentState;
     MessageJob* _activeJob;
     unsigned long _awaitSince = 0;
+    bool _replyStarted = false;  // the mount has sent at least one byte for the job in flight
 };

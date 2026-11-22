@@ -191,6 +191,111 @@ void test_late_reply_after_timeout_does_not_poison_next_job()
     TEST_ASSERT_EQUAL_STRING("Tracking,--T---,0,0,1,090008,+900000,,#", Serial.output.c_str());
 }
 
+// A command the table says nothing about still gets the mount's answer:
+// the job waits for it, and nothing else is sent until it arrives.
+void test_unlisted_command_waits_for_and_forwards_its_reply()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":XGHD#", JobSource::FromClient));
+    tick();  // sends, then waits: the mount answers this one
+    TEST_ASSERT_EQUAL_STRING(":XGHD#", mount.written.c_str());
+
+    queue->enqueue(new MessageJob(":GVN#", JobSource::FromClient));
+    tick();
+    TEST_ASSERT_EQUAL_STRING(":XGHD#", mount.written.c_str());  // not sent yet
+
+    mount.feed("100#");
+    tick();
+    TEST_ASSERT_EQUAL_STRING("100#", Serial.output.c_str());
+
+    tick();  // idle: now the next command goes out
+    TEST_ASSERT_EQUAL_STRING(":XGHD#:GVN#", mount.written.c_str());
+}
+
+// :Q# is a stop: the mount answers nothing, so it must not hold up the
+// command queued behind it.
+void test_no_reply_command_completes_at_once()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":Q#", JobSource::FromClient));
+    tick();
+    queue->enqueue(new MessageJob(":GVN#", JobSource::FromClient));
+    tick();
+    TEST_ASSERT_EQUAL_STRING(":Q#:GVN#", mount.written.c_str());
+}
+
+// A reply that started but never finished must not leave its bytes in front
+// of the answer to the next command.
+void test_partial_reply_then_timeout_does_not_poison_next_reply()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromClient));
+    tick();                // send
+    mount.feed("Tracki");  // the reply starts ...
+    tick();
+    fake_millis += REPLY_TIMEOUT_MS + 1;
+    tick();                // ... but never finishes: the job is dropped
+
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromClient));
+    tick();
+    mount.feed("Tracking#");
+    tick();
+    TEST_ASSERT_EQUAL_STRING("Tracking#", Serial.output.c_str());  // not "TrackiTracking#"
+}
+
+// A command the mount does not answer at all must not cost the full timeout:
+// the mount answers within about 120 ms, so after 300 ms of complete silence
+// the job is given up on.
+void test_unanswered_command_is_given_up_after_a_short_silence()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":XLGR#", JobSource::FromClient));  // not a byte comes back
+    tick();
+    queue->enqueue(new MessageJob(":GVN#", JobSource::FromClient));
+
+    fake_millis += 299;
+    tick();
+    TEST_ASSERT_EQUAL_STRING(":XLGR#", mount.written.c_str());  // still waiting
+
+    fake_millis += 2;
+    tick();  // gives up
+    tick();  // the next command goes out, long before REPLY_TIMEOUT_MS
+    TEST_ASSERT_EQUAL_STRING(":XLGR#:GVN#", mount.written.c_str());
+}
+
+// Once the mount has started to answer, the short silence limit must not cut
+// the reply off: the full timeout applies.
+void test_started_reply_keeps_the_full_timeout()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":GX#", JobSource::FromClient));
+    tick();
+    mount.feed("Track");  // the reply has started ...
+    tick();
+
+    fake_millis += 1000;  // ... well past the short limit
+    tick();
+    queue->enqueue(new MessageJob(":GVN#", JobSource::FromClient));
+    tick();
+    TEST_ASSERT_EQUAL_STRING(":GX#", mount.written.c_str());  // still waiting for the rest
+
+    mount.feed("ing#");
+    tick();
+    TEST_ASSERT_EQUAL_STRING("Tracking#", Serial.output.c_str());
+}
+
+// A guide pulse is answered with nothing, and guiding sends them back to
+// back: the pulse must not hold up the command queued behind it.
+void test_guide_pulse_does_not_hold_up_the_next_command()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":Mgn0200#", JobSource::FromClient));
+    tick();
+    queue->enqueue(new MessageJob(":GVN#", JobSource::FromClient));
+    tick();
+    TEST_ASSERT_EQUAL_STRING(":Mgn0200#:GVN#", mount.written.c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -203,5 +308,11 @@ int main()
     RUN_TEST(test_controller_gx_reply_is_cached_for_status_screen);
     RUN_TEST(test_stale_mount_bytes_are_discarded_while_idle);
     RUN_TEST(test_late_reply_after_timeout_does_not_poison_next_job);
+    RUN_TEST(test_unlisted_command_waits_for_and_forwards_its_reply);
+    RUN_TEST(test_no_reply_command_completes_at_once);
+    RUN_TEST(test_partial_reply_then_timeout_does_not_poison_next_reply);
+    RUN_TEST(test_unanswered_command_is_given_up_after_a_short_silence);
+    RUN_TEST(test_started_reply_keeps_the_full_timeout);
+    RUN_TEST(test_guide_pulse_does_not_hold_up_the_next_command);
     return UNITY_END();
 }

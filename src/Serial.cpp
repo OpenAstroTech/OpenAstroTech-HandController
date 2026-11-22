@@ -34,16 +34,32 @@ MessageJob* processSerialFromClient()
     return nullptr;
 }
 
-// Handle the command replies coming from the mount
-String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort)
+// Reply bytes of the job in flight that have not formed a complete reply yet.
+static String replyAccumulator = "";
+static bool firstHash = true;  // DoubleStringReply: waiting for the first of two '#'
+
+// Forgets a reply that was only partly received, so that its bytes cannot end
+// up in front of the reply to the next command. Called when a job is
+// abandoned while its reply is incomplete.
+void discardPartialReply()
 {
-    static String replyAccumulator = "";
-    static bool firstHash = true;
+    replyAccumulator = "";
+    firstHash = true;
+}
+
+// Handle the command replies coming from the mount. anyByte, when given, is
+// set as soon as the mount has sent anything for this job.
+String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort, bool* anyByte)
+{
     String reply = "";
     while (serialPort->connected() && serialPort->available() > 0)
     {
         char ch;
         serialPort->read(&ch,1);
+        if (anyByte != nullptr)
+        {
+            *anyByte = true;
+        }
         switch (activeJob->getCommandType())
         {
             case CommandType::NoReply:

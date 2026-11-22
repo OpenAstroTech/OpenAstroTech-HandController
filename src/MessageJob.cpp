@@ -10,97 +10,67 @@ long MessageJob::_currentId = 0;
 
 CommandType MessageJob::parseCommandType(String inCmd) const
 {
-    MappedDict<String, CommandType>::DictEntry_t commandToReplyTypeLookupTable[] = {
+    // Commands whose reply is NOT one '#'-terminated string. Reply types
+    // follow the mount firmware's command handlers
+    // (OpenAstroTracker-Firmware, src/core/meade/MeadeParser*.cpp), which
+    // differ from the protocol documentation in places.
+    // Every other command - listed or not, with or without arguments - is
+    // read as a '#'-terminated string, which is how the mount answers all of
+    // its get-commands.
+    // A command matches an entry when it starts with the entry (longest entry
+    // first), so an entry also covers commands with arguments: :FP123# -> FP.
+    MappedDict<String, CommandType>::DictEntry_t replyExceptions[] = {
+        /* The mount sends nothing */
         {F("I"), CommandType::NoReply},
-        {F("CM"), CommandType::StringReply},
-        {F("D"), CommandType::StringReply},
-        {F("gT"), CommandType::NumberReply},
-        {F("GVP"), CommandType::StringReply},
-        {F("GVN"), CommandType::StringReply},
-        {F("Gd"), CommandType::StringReply},
-        {F("GD"), CommandType::StringReply},
-        {F("Gr"), CommandType::StringReply},
-        {F("GR"), CommandType::StringReply},
-        {F("Gt"), CommandType::StringReply},
-        {F("Gg"), CommandType::StringReply},
-        {F("Gc"), CommandType::StringReply},
-        {F("GG"), CommandType::StringReply},
-        {F("Ga"), CommandType::StringReply},
-        {F("GL"), CommandType::StringReply},
-        {F("GC"), CommandType::StringReply},
-        {F("GM"), CommandType::StringReply},
-        {F("GN"), CommandType::StringReply},
-        {F("GO"), CommandType::StringReply},
-        {F("GP"), CommandType::StringReply},
-        {F("GT"), CommandType::StringReply},
-        {F("GIS"), CommandType::StringReply},
-        {F("GIT"), CommandType::StringReply},
-        {F("GIG"), CommandType::StringReply},
-        {F("GX"), CommandType::StringReply},
+        {F("Q"), CommandType::NoReply},       // :Q# (stops tracking too) and its one-letter variants
+        {F("RS"), CommandType::NoReply},      // slew rates
+        {F("RM"), CommandType::NoReply},
+        {F("RC"), CommandType::NoReply},
+        {F("RG"), CommandType::NoReply},
+        {F("Mn"), CommandType::NoReply},      // moves
+        {F("Me"), CommandType::NoReply},
+        {F("Ms"), CommandType::NoReply},
+        {F("Mw"), CommandType::NoReply},
+        {F("MG"), CommandType::NoReply},      // guide pulses: the handler sends nothing on success
+        {F("Mg"), CommandType::NoReply},
+        {F("MAZ"), CommandType::NoReply},     // :MAZn.nn#
+        {F("MAL"), CommandType::NoReply},     // :MALn.nn#
+        {F("hP"), CommandType::NoReply},      // park
+        {F("hF"), CommandType::NoReply},      // find home
+        {F("XD"), CommandType::NoReply},      // :XDnnn#
+        {F("XS"), CommandType::NoReply},      // the :XS...# set-commands
+        {F("F+"), CommandType::NoReply},
+        {F("F-"), CommandType::NoReply},
+        {F("F1"), CommandType::NoReply},      // focuser speed presets
+        {F("F2"), CommandType::NoReply},
+        {F("F3"), CommandType::NoReply},
+        {F("F4"), CommandType::NoReply},
+        {F("FM"), CommandType::NoReply},      // :FM<steps>#
+        {F("FS"), CommandType::NoReply},
+        {F("FF"), CommandType::NoReply},
+        {F("FQ"), CommandType::NoReply},
+        /* The mount sends one character */
+        {F("g"), CommandType::NumberReply},   // :gT..# - every :g... reply is one character
         {F("Sd"), CommandType::NumberReply},
         {F("Sr"), CommandType::NumberReply},
         {F("St"), CommandType::NumberReply},
         {F("Sg"), CommandType::NumberReply},
-        {F("SC"), CommandType::DoubleStringReply},
         {F("SG"), CommandType::NumberReply},
         {F("SL"), CommandType::NumberReply},
         {F("SH"), CommandType::NumberReply},
         {F("SY"), CommandType::NumberReply},
-        {F("MS"), CommandType::NumberReply},
-        {F("MG"), CommandType::NumberReply},
-        {F("MT"), CommandType::NumberReply},
-        {F("MX"), CommandType::NumberReply},
-        {F("MH"), CommandType::NumberReply},
+        {F("MS"), CommandType::NumberReply},  // slew to target
+        {F("MT"), CommandType::NumberReply},  // :MT1#, :MT0# - tracking on/off
+        {F("MX"), CommandType::NumberReply},  // :MXxnnnnn#
+        {F("MHR"), CommandType::NumberReply}, // :MHRxn#, :MHDxn# - Hall-sensor homing
+        {F("MHD"), CommandType::NumberReply},
         {F("MAAH"), CommandType::NumberReply},
         {F("hU"), CommandType::NumberReply},
         {F("hZ"), CommandType::NumberReply},
-        {F("SL"), CommandType::NumberReply},
-        {F("SL"), CommandType::NumberReply},
-        {F("SL"), CommandType::NumberReply},
-        {F("XFR"), CommandType::StringReply},
-        {F("XL"), CommandType::StringReply},
-        {F("XG"), CommandType::StringReply},
-        {F("Fp"), CommandType::StringReply},
-        {F("FP"), CommandType::NumberReply},
+        {F("FP"), CommandType::NumberReply},  // :FPnnn#
         {F("FB"), CommandType::NumberReply},
-        {F("RS"), CommandType::NoReply},
-        {F("RM"), CommandType::NoReply},
-        {F("RC"), CommandType::NoReply},
-        {F("RG"), CommandType::NoReply},
-        {F("Mn"), CommandType::NoReply},
-        {F("Me"), CommandType::NoReply},
-        {F("Ms"), CommandType::NoReply},
-        {F("Mw"), CommandType::NoReply},
-        {F("MAZ"), CommandType::NoReply},
-        {F("MAL"), CommandType::NoReply},
-        {F("hP"), CommandType::NoReply},
-        {F("hF"), CommandType::NoReply},
-        {F("Qn"), CommandType::NoReply},
-        {F("Qe"), CommandType::NoReply},
-        {F("Qw"), CommandType::NoReply},
-        {F("Qs"), CommandType::NoReply},
-        {F("Qa"), CommandType::NoReply},
-        {F("Qq"), CommandType::NoReply},
-        {F("XD"), CommandType::NoReply},
-        {F("XSB"), CommandType::NoReply},
-        {F("XSHR"), CommandType::NoReply},
-        {F("XSHD"), CommandType::NoReply},
-        {F("XSR"), CommandType::NoReply},
-        {F("XSD"), CommandType::NoReply},
-        {F("XSS"), CommandType::NoReply},
-        {F("XST"), CommandType::NoReply},
-        {F("XSM"), CommandType::NoReply},
-        {F("XSX"), CommandType::NoReply},
-        {F("XSY"), CommandType::NoReply},
-        {F("F+"), CommandType::NoReply},
-        {F("F-"), CommandType::NoReply},
-        {F("F1"), CommandType::NoReply},
-        {F("F2"), CommandType::NoReply},
-        {F("F3"), CommandType::NoReply},
-        {F("F4"), CommandType::NoReply},
-        {F("FS"), CommandType::NoReply},
-        {F("FF"), CommandType::NoReply},
-        {F("FQ"), CommandType::NoReply},
+        /* The mount sends two '#'-terminated strings */
+        {F("SC"), CommandType::DoubleStringReply},  // :SCMM/DD/YY#
     };
 
     if (inCmd[0] == ':')
@@ -119,26 +89,18 @@ CommandType MessageJob::parseCommandType(String inCmd) const
             inCmd.remove(inCmd.length() - 1, 1);
         }
 
-        // Get the command type
-        auto strLookup = MappedDict<String, CommandType>(commandToReplyTypeLookupTable, ARRAY_SIZE(commandToReplyTypeLookupTable));
-        CommandType rtnType;
-        if (strLookup.tryGet(inCmd, &rtnType))
+        CommandType rtnType = CommandType::StringReply;
+        int longestMatch = -1;
+        for (unsigned i = 0; i < ARRAY_SIZE(replyExceptions); i++)
         {
-            return rtnType;
-        }
-        else
-        {
-            // Not in the table, special case handling for :Q#
-            if (inCmd == "Q")
+            const int entryLength = (int) replyExceptions[i].in.length();
+            if (entryLength > longestMatch && inCmd.startsWith(replyExceptions[i].in))
             {
-                return CommandType::NumberReply;
-            }
-            else
-            {
-                // unknown command
-                LOG(DEBUG_JOBS, "Unknown command! %s", inCmd.c_str());
+                longestMatch = entryLength;
+                rtnType = replyExceptions[i].out;
             }
         }
+        return rtnType;
     }
 
     return CommandType::NoReply;

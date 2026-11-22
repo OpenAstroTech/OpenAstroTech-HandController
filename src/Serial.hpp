@@ -17,5 +17,10 @@ public:
 
 MessageJob* processSerialFromClient();
 
-// Handle the command replies coming from the mount
-String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort);
+// Handle the command replies coming from the mount. anyByte, when given, is
+// set as soon as the mount has sent anything for the job.
+String processSerialFromMount(MessageJob* activeJob, ISerial* serialPort, bool* anyByte = nullptr);
+
+// Forget a reply that was only partly received (a job abandoned before its
+// reply was complete).
+void discardPartialReply();
