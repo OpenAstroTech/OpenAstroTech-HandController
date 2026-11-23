@@ -44,6 +44,10 @@ void Controller::setLastGX(String lastGXReply, long timestamp) {
     _lastGXTime = timestamp;
 }
 
+void Controller::setLastXGM(String hardwareInfo) {
+    _lastXGM = hardwareInfo;
+}
+
 void Controller::setReply(String reply)
 {
     _commandReply = reply;

@@ -153,6 +153,40 @@ void test_controller_gx_reply_is_cached_for_status_screen()
     TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());
 }
 
+// The hardware profile feeds the menu's hardware gating (MenuDefinition);
+// it must be cached no matter who asked for it.
+static const char* const BENCH_XGM_REPLY =
+    "Mega,NEMA|16|3600,NEMA|16|3600,NO_GPS,AUTO_AZ_ALT,NO_GYRO,NO_LCD,"
+    "INFO_I2C_SSD1306_128x64,NO_FOC,HSAH,HSAV,ENDSW_DEC,#";
+
+void test_controller_xgm_reply_is_cached_for_hardware_gating()
+{
+    resetPipeline();
+    TEST_ASSERT_EQUAL_STRING("", controller->getLastXGM().c_str());
+
+    queue->enqueue(new MessageJob(":XGM#", JobSource::FromController));
+    tick();
+    mount.feed(BENCH_XGM_REPLY);
+    tick();
+
+    TEST_ASSERT_EQUAL_STRING(BENCH_XGM_REPLY, controller->getLastXGM().c_str());
+    TEST_ASSERT_EQUAL_STRING(BENCH_XGM_REPLY, controller->getReply().c_str());
+    TEST_ASSERT_EQUAL_STRING("", Serial.output.c_str());  // not leaked to the client
+}
+
+void test_client_xgm_passthrough_is_cached_too()
+{
+    resetPipeline();
+    queue->enqueue(new MessageJob(":XGM#", JobSource::FromClient));
+
+    tick();
+    mount.feed(BENCH_XGM_REPLY);
+    tick();
+
+    TEST_ASSERT_EQUAL_STRING(BENCH_XGM_REPLY, Serial.output.c_str());
+    TEST_ASSERT_EQUAL_STRING(BENCH_XGM_REPLY, controller->getLastXGM().c_str());
+}
+
 void test_stale_mount_bytes_are_discarded_while_idle()
 {
     resetPipeline();
@@ -306,6 +340,8 @@ int main()
     RUN_TEST(test_client_reply_forwarded_and_gx_cached);
     RUN_TEST(test_controller_job_reply_routed_to_controller);
     RUN_TEST(test_controller_gx_reply_is_cached_for_status_screen);
+    RUN_TEST(test_controller_xgm_reply_is_cached_for_hardware_gating);
+    RUN_TEST(test_client_xgm_passthrough_is_cached_too);
     RUN_TEST(test_stale_mount_bytes_are_discarded_while_idle);
     RUN_TEST(test_late_reply_after_timeout_does_not_poison_next_job);
     RUN_TEST(test_unlisted_command_waits_for_and_forwards_its_reply);

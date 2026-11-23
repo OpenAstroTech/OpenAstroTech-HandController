@@ -86,6 +86,13 @@ public:
                         {
                             _controller->setLastGX(reply, millis());
                         }
+                        // Cache the hardware profile for both sources so the
+                        // menu's hardware gating (MenuDefinition) rebuilds
+                        // when the mount answers.
+                        else if (_activeJob->getCommand().startsWith(":XGM"))
+                        {
+                            _controller->setLastXGM(reply);
+                        }
 
                         if (_activeJob->getSource() == JobSource::FromClient)
                         {
