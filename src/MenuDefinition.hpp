@@ -162,7 +162,7 @@ inline String buildMenuDef(const char* xgm)
         "    IntegerRanged, 421, \"Minutes\", 0, 59\n"
         "    IntegerRanged, 422, \"Seconds\", 0, 59\n"
         "    Action, 423, \"Store time\"\n"
-        "    Integer, 430, \"UTC offset\"\n"
+        "    IntegerRanged, 430, \"UTC offset\", -12, 12\n"
         "    Action, 431, \"Store UTC\"\n");
 
     if (hasFoc)

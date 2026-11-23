@@ -112,6 +112,10 @@ static RotaryAsJogInput rotaryAsJog;
 static unsigned long lastXGMAttempt = 0;
 static const unsigned long XGM_RETRY_MS = 2000;
 static bool menuRebuiltFromXGM = false;
+// The USB umount callback runs on core1 (USBHost.task()); an Arduino
+// String assignment is not atomic, so the callback only raises this flag
+// and the core0 loop does the actual profile clear.
+static volatile bool xgmProfileCleared = false;
 
 // Idle-screen gestures and screen bookkeeping.
 static bool reopenMenuOnRelease = false;  // jog exits back into the menu
@@ -501,13 +505,27 @@ void loop()
         // controller boots, the mount's USB-serial bridge is re-enumerating
         // and the first :XGM# can vanish into the 300 ms silence give-up
         // before the mount is ready to answer.
+        if (xgmProfileCleared)
+        {
+            // A mount was unplugged (flag from the core1 umount callback):
+            // drop the profile so the query below refetches it.
+            xgmProfileCleared = false;
+            controller->setLastXGM("");
+            lastXGMAttempt = 0;
+            menuRebuiltFromXGM = false;
+        }
+
         if (mountSerial->connected() && controller->getLastXGM().length() == 0
             && millis() - lastXGMAttempt >= XGM_RETRY_MS)
         {
             lastXGMAttempt = millis();
             enqueueCommand(":XGM#");
         }
-        if (!menuRebuiltFromXGM && controller->getLastXGM().length() > 0)
+        // The rebuild waits for a closed menu and jog: swapping the menu
+        // out from under the user would drop their position mid-navigation
+        // and leave the opening press to arm the idle Stop-all timer.
+        if (!menuRebuiltFromXGM && controller->getLastXGM().length() > 0
+            && !jog.isActive() && !menuNav->isActive())
         {
             MenuNavigator* rebuilt = buildMenuNavigator(controller->getLastXGM().c_str());
             if (rebuilt != nullptr)
@@ -635,11 +653,11 @@ extern "C" {
         SerialHost.umount(idx);
         LOG(DEBUG_CTRL, "SerialHost is disconnected.");
 #if INFO_DISPLAY == 1
-        // A different mount may have different hardware: drop the profile
-        // so the loop re-queries :XGM# and rebuilds the menu.
-        controller->setLastXGM("");
-        lastXGMAttempt = 0;
-        menuRebuiltFromXGM = false;
+        // A different mount may have different hardware: raise the flag so
+        // the core0 loop drops the profile (String access must stay on
+        // core0; this callback runs inside USBHost.task() on core1) and
+        // re-queries :XGM#.
+        xgmProfileCleared = true;
 #endif
     }
 

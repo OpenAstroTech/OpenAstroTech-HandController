@@ -116,6 +116,17 @@ void test_az_alt_gate_nudges()
     TEST_ASSERT_FALSE(contains(plain, "ALT +1 arcmin"));
 }
 
+// The UTC offset editor must be ranged across the sign: the plain digit
+// editor (NumericMenuItem) can only flip a sign when the buffer already
+// contains '-', and it starts at "0" - so a plain editor can never enter a
+// negative offset, and western-hemisphere users would store a wrong site
+// offset.
+void test_utc_offset_editor_spans_the_sign()
+{
+    String def = buildMenuDef(nullptr);
+    TEST_ASSERT_TRUE(contains(def, "IntegerRanged, 430, \"UTC offset\", -12, 12"));
+}
+
 void test_def_parses_structurally()
 {
     String def = buildMenuDef(nullptr);
@@ -171,6 +182,7 @@ int main()
     RUN_TEST(test_no_foc_does_not_enable_focus);
     RUN_TEST(test_hall_sensors_gate_autohome);
     RUN_TEST(test_az_alt_gate_nudges);
+    RUN_TEST(test_utc_offset_editor_spans_the_sign);
     RUN_TEST(test_def_parses_structurally);
     RUN_TEST(test_confirm_cursors_land_on_no);
     return UNITY_END();

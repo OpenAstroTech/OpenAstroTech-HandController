@@ -119,11 +119,12 @@ inline const char* menuIdToCommand(uint16_t id)
         // The firmware's Unpark merely restarts tracking; :hU# does exactly
         // that and answers "1".
         case ID_GOTO_UNPARK: return ":hU#";
-        // Hall-sensor auto-home. The direction letter is mandatory (a bare
-        // :MHR# is rejected by the mount's movement parser); 'r'/'d' are
-        // the builder-tunable defaults.
-        case ID_ALIGN_AUTOHOME_RA_YES: return ":MHRr#";
-        case ID_ALIGN_AUTOHOME_DEC_YES: return ":MHDd#";
+        // Hall-sensor auto-home. The direction letter is mandatory and
+        // UPPERCASE (the mount's movement parser matches 'R'/'L' for RA and
+        // 'U'/'D' for DEC byte-exactly and rejects anything else with "0"
+        // and no motion); these are the builder-tunable defaults.
+        case ID_ALIGN_AUTOHOME_RA_YES: return ":MHRR#";
+        case ID_ALIGN_AUTOHOME_DEC_YES: return ":MHDU#";
         // CTRL menu's set-current-as-home.
         case ID_ALIGN_SET_HOME: return ":SHP#";
         // The firmware's arc-minute AZ/ALT adjustments, one arcminute at a

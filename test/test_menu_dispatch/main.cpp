@@ -17,10 +17,12 @@ void test_direct_commands()
     // The firmware's Unpark merely restarts tracking; :hU# does exactly that
     // and answers "1".
     TEST_ASSERT_EQUAL_STRING(":hU#", menuIdToCommand(ID_GOTO_UNPARK));
-    // Direction letters are the builder-tunable defaults and mandatory: a
-    // bare :MHR# is rejected by the mount's movement parser.
-    TEST_ASSERT_EQUAL_STRING(":MHRr#", menuIdToCommand(ID_ALIGN_AUTOHOME_RA_YES));
-    TEST_ASSERT_EQUAL_STRING(":MHDd#", menuIdToCommand(ID_ALIGN_AUTOHOME_DEC_YES));
+    // Direction letters are mandatory and UPPERCASE: the mount's movement
+    // parser matches 'R'/'L' for RA and 'U'/'D' for DEC byte-exactly (a
+    // lowercase letter is rejected with "0" and no motion). Defaults:
+    // search counter-clockwise on RA, up on DEC.
+    TEST_ASSERT_EQUAL_STRING(":MHRR#", menuIdToCommand(ID_ALIGN_AUTOHOME_RA_YES));
+    TEST_ASSERT_EQUAL_STRING(":MHDU#", menuIdToCommand(ID_ALIGN_AUTOHOME_DEC_YES));
     TEST_ASSERT_EQUAL_STRING(":SHP#", menuIdToCommand(ID_ALIGN_SET_HOME));
     TEST_ASSERT_EQUAL_STRING(":MAZ+1.0#", menuIdToCommand(ID_ALIGN_AZ_PLUS));
     TEST_ASSERT_EQUAL_STRING(":MAZ-1.0#", menuIdToCommand(ID_ALIGN_AZ_MINUS));
