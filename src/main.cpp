@@ -9,6 +9,8 @@
 #if INFO_DISPLAY == 1
 #include "SSD1306_128x64_Display.hpp"
 #include "MenuCommands.hpp"
+#include "MenuDefinition.hpp"
+#include "JogController.hpp"
 #include "StatusRefresher.hpp"
 #include "Menu/MenuNavigator.hpp"
 #include "Menu/MenuParser.hpp"
@@ -39,107 +41,109 @@ JobPipeline* pipeline = new JobPipeline(mountSerial, controller);
 SDD1306OLED128x64* lcd = nullptr;
 RotaryEncoder* rotaryInput = nullptr;
 MenuNavigator* menuNav = nullptr;
+Menu* menuRoot = nullptr;
 StatusRefresher statusRefresher(controller);
 bool waitForSelectRelease = false;
 long lastRender = 0;
 
-// Declarative menu definition (grammar: OledMenu docs/menu-format.md).
-// Ids must match the MenuCommandId enum in MenuCommands.hpp. The same
-// definition lives in the OledMenu simulator (sim/menu.txt), where it can
-// be exercised without hardware; keep the two in sync.
-static String buildMenuDef()
-{
-    String def = F(
-        "Menu, 1, \"HandController\"\n"
-        "  Submenu, 20, \"Target\"\n"
-        "    IntegerRanged, 200, \"RA hours\", 0, 23\n"
-        "    IntegerRanged, 201, \"RA minutes\", 0, 59\n"
-        "    IntegerRanged, 202, \"RA seconds\", 0, 59\n"
-        "    Toggle, 203, \"DEC negative\"\n"
-        "    IntegerRanged, 204, \"DEC degrees\", 0, 89\n"
-        "    IntegerRanged, 205, \"DEC minutes\", 0, 59\n"
-        "    IntegerRanged, 206, \"DEC seconds\", 0, 59\n"
-        "    Action, 207, \"Slew\"\n"
-        "  Submenu, 10, \"Goto\"\n"
-        "    Select, 100, \"Object\"\n"
-        "      Option, \"Polaris\"\n"
-        "      Option, \"Altair\"\n"
-        "      Option, \"Arcturus\"\n"
-        "      Option, \"Big Dipper\"\n"
-        "      Option, \"Cederblad 214\"\n"
-        "      Option, \"Deneb (Cygnus)\"\n"
-        "      Option, \"Elephant Trunk\"\n"
-        "      Option, \"Heart Nebula\"\n"
-        "      Option, \"Lagoon Nebula\"\n"
-        "      Option, \"M31 Andromeda\"\n"
-        "      Option, \"M33 Triangulum\"\n"
-        "      Option, \"M42 Orion Nebula\"\n"
-        "      Option, \"M51 Whirlpool\"\n"
-        "      Option, \"M63 Sunflower\"\n"
-        "      Option, \"M81 Bodes Galaxy\"\n"
-        "      Option, \"M101 Pinwheel\"\n"
-        "      Option, \"Navi\"\n"
-        "      Option, \"Pleiades 7 Sisters\"\n"
-        "      Option, \"Soul Nebula\"\n"
-        "      Option, \"Vega\"\n"
-        "      Option, \"Veil Nebula\"\n"
-        "    Action, 101, \"Home\"\n"
-        "    Action, 102, \"Unpark\"\n"
-        "    Action, 103, \"Park\"\n"
-        "  Submenu, 60, \"HA\"\n"
-        "    IntegerRanged, 600, \"Hours\", 0, 23\n"
-        "    IntegerRanged, 601, \"Minutes\", 0, 59\n"
-        "    Action, 602, \"Store & track\"\n"
-        "  Submenu, 30, \"Move\"\n"
-        "    Action, 300, \"North\"\n"
-        "    Action, 301, \"South\"\n"
-        "    Action, 302, \"East\"\n"
-        "    Action, 303, \"West\"\n"
-        "    Action, 304, \"Stop\"\n"
-        "    Select, 305, \"Rate\"\n"
-        "      Option, \"Guide\"\n"
-        "      Option, \"Center\"\n"
-        "      Option, \"Find\"\n"
-        "      Option, \"Max\"\n"
-        "    Action, 306, \"Set home here\"\n"
-        "  Submenu, 40, \"Cal\"\n"
-        "    Float, 402, \"Track speed\", 3\n"
-        "    Float, 403, \"RA steps/deg\", 1\n"
-        "    Float, 404, \"DEC steps/deg\", 1\n"
-        "    Integer, 405, \"Backlash steps\"\n"
-        "    Action, 406, \"Set DEC lower\"\n"
-        "    Action, 407, \"Clear DEC lower\"\n"
-        "    Action, 408, \"Set DEC upper\"\n"
-        "    Action, 409, \"Clear DEC upper\"\n"
-        "    Integer, 410, \"UTC offset\"\n"
-        "    Action, 411, \"AZ +1 arcmin\"\n"
-        "    Action, 412, \"AZ -1 arcmin\"\n"
-        "    Action, 413, \"ALT +1 arcmin\"\n"
-        "    Action, 414, \"ALT -1 arcmin\"\n"
-        "  Submenu, 50, \"Focus\"\n"
-        "    Action, 500, \"Focus in\"\n"
-        "    Action, 501, \"Focus out\"\n"
-        "    Action, 502, \"Stop\"\n"
-        "    Select, 503, \"Rate\"\n"
-        "      Option, \"1 (smallest)\"\n"
-        "      Option, \"2 (small)\"\n"
-        "      Option, \"3 (large)\"\n"
-        "      Option, \"4 (largest)\"\n"
-        "  Submenu, 70, \"Info\"\n"
-        "    Label, 700, \"RA\"\n"
-        "    Label, 701, \"DEC\"\n"
-        "    Label, 702, \"Site\"\n"
-        "    Label, 703, \"Date\"\n"
-        "    Label, 704, \"UTC offset\"\n"
-        "    Label, 705, \"Local time\"\n"
-        "    Label, 706, \"Firmware\"\n"
-        "  Action, 99, \"Exit\"\n");
-    return def;
-}
-
-// The Target and HA forms collect their editor values here until Slew or
-// Store composes them into commands.
+// The editor forms collect their values on-device until Slew or a Store
+// composes them into commands (the mount never receives a blind value).
 static TargetState menuTargetState;
+static SetupState menuSetupState;
+
+// Jog mode: the dial is a speed throttle (JogController), the encoder is
+// adapted to the narrow input surface the state machine needs.
+static JogController jog;
+
+class RotaryAsJogInput : public JogInput
+{
+public:
+    void begin(RotaryEncoder* encoder) { _encoder = encoder; }
+
+    // Re-syncs the edge tracking when a jog session starts, so a press that
+    // is already down (the menu click that opened jog) does not produce a
+    // phantom click, and latched detents from menu navigation are dropped.
+    void beginSession()
+    {
+        _selectWasDown = _encoder != nullptr && _encoder->isSelectPressed();
+        if (_encoder != nullptr)
+        {
+            while (_encoder->isUpPressed()) {}
+            while (_encoder->isDownPressed()) {}
+        }
+    }
+
+    bool upPulse() override { return _encoder != nullptr && _encoder->isUpPressed(); }
+    bool downPulse() override { return _encoder != nullptr && _encoder->isDownPressed(); }
+
+    bool selectDown() override
+    {
+        const bool down = _encoder != nullptr && _encoder->isSelectPressed();
+        const bool edge = down && !_selectWasDown;
+        _selectWasDown = down;
+        return edge;
+    }
+
+    bool selectUp() override
+    {
+        const bool down = _encoder != nullptr && _encoder->isSelectPressed();
+        const bool edge = !down && _selectWasDown;
+        _selectWasDown = down;
+        return edge;
+    }
+
+    unsigned long selectHeldMs(unsigned long now) override
+    {
+        (void) now;
+        return _encoder != nullptr ? _encoder->getSelectPressDuration() : 0;
+    }
+
+private:
+    RotaryEncoder* _encoder = nullptr;
+    bool _selectWasDown = false;
+};
+
+static RotaryAsJogInput rotaryAsJog;
+
+// Hardware profile flow: the :XGM# query retries every 2 s until the mount
+// answers (its USB-serial bridge is not ready to answer in the first
+// moments after this controller boots), then the menu rebuilds once from
+// the reply (MenuDefinition omits the blocks the mount lacks).
+static unsigned long lastXGMAttempt = 0;
+static const unsigned long XGM_RETRY_MS = 2000;
+static bool menuRebuiltFromXGM = false;
+
+// Idle-screen gestures and screen bookkeeping.
+static bool reopenMenuOnRelease = false;  // jog exits back into the menu
+static bool jogJustActivated = false;
+static char lastJogAxis = ' ';
+static unsigned long idlePressStart = 0;
+static bool idleStopSent = false;
+static long lastGXSyncAt = 0;
+static const unsigned long IDLE_STOP_ALL_MS = 750;
+
+static void onMenuActivity(const char* payload);  // forward: used by the builder
+
+// Builds a navigator from the (possibly hardware-gated) menu definition.
+// Builders and menus leak by design: the menu is built twice per session at
+// most (boot, and the hardware-profile rebuild).
+static MenuNavigator* buildMenuNavigator(const char* xgmProfile)
+{
+    String def = buildMenuDef(xgmProfile);
+    DefaultMenuBuilder* builder = new DefaultMenuBuilder();
+    if (!MenuParser::parse(def.c_str(), builder)
+        || builder->hadError()
+        || builder->getRootMenu() == nullptr)
+    {
+        Serial.println("Menu parse failed.");
+        return nullptr;
+    }
+    builder->getRootMenu()->setOnMenuActivity(onMenuActivity);
+    menuRoot = builder->getRootMenu();
+    MenuNavigator* nav = new MenuNavigator(menuRoot, rotaryInput, lcd);
+    nav->setActive(false);
+    return nav;
+}
 
 static void enqueueCommand(const char* command)
 {
@@ -159,8 +163,28 @@ static void enqueueSlew(const SkyCoordinate* coord)
     enqueueCommand(":MS#");
 }
 
-// Single activity callback from the menu: route "id|value" payloads to mount
-// commands through the job pipeline, or handle UI-only items (Exit) here.
+// True when the cached :GX# reply says tracking is running (activity letter
+// T is not '-').
+static bool gxTrackingOn()
+{
+    String gx = controller->getLastGX();
+    int firstComma = gx.indexOf(',');
+    if (firstComma < 0)
+    {
+        return false;
+    }
+    String activity = gx.substring(firstComma + 1);
+    int secondComma = activity.indexOf(',');
+    if (secondComma >= 0)
+    {
+        activity = activity.substring(0, secondComma);
+    }
+    return activity.length() > 2 && activity[2] != '-';
+}
+
+// Single activity callback from the menu: route "id|value" payloads to
+// mount commands through the job pipeline, or handle UI-only items (Exit,
+// Jog, confirm "No") here.
 static void onMenuActivity(const char* payload)
 {
     uint16_t id = 0;
@@ -177,18 +201,47 @@ static void onMenuActivity(const char* payload)
         return;
     }
 
-    // The Target and HA editors only update the pending target...
+    // Confirm screens' "No": step back to the parent menu.
+    if (id == ID_GOTO_HOME_NO || id == ID_GOTO_PARK_NO
+        || id == ID_ALIGN_AUTOHOME_RA_NO || id == ID_ALIGN_AUTOHOME_DEC_NO)
+    {
+        menuNav->returnToParent();
+        return;
+    }
+
+    if (id == ID_JOG)
+    {
+        menuNav->setActive(false);
+        jog.setActive(true);
+        jogJustActivated = true;
+        rotaryAsJog.beginSession();
+        enqueueCommand(":XSM1#");  // manual slew mode on for the jog session
+        return;
+    }
+
+    if (id == ID_TRACKING)
+    {
+        const char* cmd = trackingToggleToCommand(value);
+        if (cmd != nullptr)
+        {
+            enqueueCommand(cmd);
+        }
+        return;
+    }
+
+    // The Target and Setup editors only update the pending values...
     if (updateTargetState(&menuTargetState, id, value))
     {
         return;
     }
-
-    // ...single commands go straight through...
-    const char* command = menuIdToCommand(id);
-    if (command == nullptr && id == ID_MOVE_RATE)
+    if (updateSetupState(&menuSetupState, id, value))
     {
-        command = rateOptionToCommand(value);
+        return;
     }
+
+    // ...single commands go straight through; actions that start a motion
+    // or end a session close the menu so the idle screen takes over...
+    const char* command = menuIdToCommand(id);
     if (command == nullptr && id == ID_FOCUS_RATE)
     {
         command = focusRateOptionToCommand(value);
@@ -196,23 +249,23 @@ static void onMenuActivity(const char* payload)
     if (command != nullptr)
     {
         enqueueCommand(command);
-        return;
-    }
-
-    // ...Cal values compose from the confirmed value...
-    char buf[20];
-    if (menuValueToCommand(id, value, buf, sizeof(buf)))
-    {
-        enqueueCommand(buf);
+        if (menuActionClosesMenu(id))
+        {
+            menuNav->setActive(false);
+            waitForSelectRelease = true;
+        }
         return;
     }
 
     // ...and the composites build their command sequences.
+    char buf[20];
     if (id == ID_TARGET_SLEW)
     {
         SkyCoordinate coord;
         targetCoordinate(&menuTargetState, &coord);
         enqueueSlew(&coord);
+        menuNav->setActive(false);
+        waitForSelectRelease = true;
     }
     else if (id == ID_GOTO_OBJECT)
     {
@@ -220,17 +273,36 @@ static void onMenuActivity(const char* payload)
         if (poiCoordinates(value, &coord))
         {
             enqueueSlew(&coord);
+            menuNav->setActive(false);
+            waitForSelectRelease = true;
         }
         else
         {
             LOG(DEBUG_JOBS, "Unknown object '%s'", value);
         }
     }
-    else if (id == ID_HA_STORE)
+    else if (id == ID_SETUP_HA_STORE)
     {
-        composeShCommand(&menuTargetState, buf, sizeof(buf));
+        composeShCommand(&menuSetupState, buf, sizeof(buf));
         enqueueCommand(buf);
         enqueueCommand(":MT1#");  // ...and start tracking, like the mount's HA store
+        menuNav->setActive(false);
+        waitForSelectRelease = true;
+    }
+    else if (id == ID_SETUP_DATE_STORE)
+    {
+        composeScCommand(&menuSetupState, buf, sizeof(buf));
+        enqueueCommand(buf);
+    }
+    else if (id == ID_SETUP_TIME_STORE)
+    {
+        composeSlCommand(&menuSetupState, buf, sizeof(buf));
+        enqueueCommand(buf);
+    }
+    else if (id == ID_SETUP_UTC_STORE)
+    {
+        composeSgCommand(&menuSetupState, buf, sizeof(buf));
+        enqueueCommand(buf);
     }
 }
 
@@ -318,6 +390,22 @@ static void renderStatusScreen()
 
     lcd->display();
 }
+
+// The jog screen: which axis the dial moves and how fast each axis runs.
+static void renderJogScreen()
+{
+    lcd->clear();
+    char line[30];
+    snprintf(line, sizeof(line), "JOG  %s", jog.activeAxis() == 'R' ? "RA" : "DEC");
+    lcd->drawString(0, 0, line);
+    snprintf(line, sizeof(line), "%s RA  %+.2f deg/s", jog.activeAxis() == 'R' ? ">" : " ", jog.raSpeed());
+    lcd->drawString(1, 14, line);
+    snprintf(line, sizeof(line), "%s DEC %+.2f deg/s", jog.activeAxis() == 'D' ? ">" : " ", jog.decSpeed());
+    lcd->drawString(1, 24, line);
+    lcd->setCurrentFont(Bitmap3x5);
+    lcd->getDisplayDevice()->drawString(0, 59, "CLICK STOP/TURN  HOLD EXIT");
+    lcd->display();
+}
 #endif
 
 //------------- Core1 -------------//
@@ -360,22 +448,17 @@ void setup()
     Serial.println("Display initialized.");
 
     initTargetState(&menuTargetState);
+    initSetupState(&menuSetupState);
 
     rotaryInput = new RotaryEncoder(ROTARY_ENCODER_CLK_PIN, ROTARY_ENCODER_DT_PIN, ROTARY_ENCODER_SW_PIN);
+    rotaryAsJog.begin(rotaryInput);
 
-    DefaultMenuBuilder menuBuilder;
-    if (MenuParser::parse(buildMenuDef().c_str(), &menuBuilder)
-        && !menuBuilder.hadError()
-        && menuBuilder.getRootMenu() != nullptr)
+    // The menu is built before the hardware profile is known: full tree.
+    // When the mount answers :XGM#, the loop rebuilds it gated.
+    menuNav = buildMenuNavigator(nullptr);
+    if (menuNav != nullptr)
     {
-        menuBuilder.getRootMenu()->setOnMenuActivity(onMenuActivity);
-        menuNav = new MenuNavigator(menuBuilder.getRootMenu(), rotaryInput, lcd);
-        menuNav->setActive(false);
         Serial.println("Menu initialized.");
-    }
-    else
-    {
-        Serial.println("Menu parse failed.");
     }
 #endif
 }
@@ -412,38 +495,122 @@ void loop()
         // and the loop is non-blocking.
         rotaryInput->realTimeUpdate();
 
-        if (!menuNav->isActive())
+        // Ask the mount what hardware it has, once per connection, and
+        // rebuild the menu from the profile when the reply arrives. The
+        // request retries every 2 s until answered: right after this
+        // controller boots, the mount's USB-serial bridge is re-enumerating
+        // and the first :XGM# can vanish into the 300 ms silence give-up
+        // before the mount is ready to answer.
+        if (mountSerial->connected() && controller->getLastXGM().length() == 0
+            && millis() - lastXGMAttempt >= XGM_RETRY_MS)
         {
-            // A click opens the menu; wait for the release so the opening
-            // click doesn't immediately register as SELECT.
-            if (rotaryInput->isSelectPressed() && !waitForSelectRelease)
+            lastXGMAttempt = millis();
+            enqueueCommand(":XGM#");
+        }
+        if (!menuRebuiltFromXGM && controller->getLastXGM().length() > 0)
+        {
+            MenuNavigator* rebuilt = buildMenuNavigator(controller->getLastXGM().c_str());
+            if (rebuilt != nullptr)
             {
-                menuNav->setActive(true);
+                menuNav = rebuilt;
+                Serial.println("Menu rebuilt from hardware profile.");
             }
-            else if (!rotaryInput->isSelectPressed() && waitForSelectRelease)
-            {
-                waitForSelectRelease = false;
-            }
+            menuRebuiltFromXGM = true;  // never retry the parse every loop
         }
 
-        if (menuNav->update() && menuNav->isActive())
+        // Keep the Tracking toggle honest while the menu is open.
+        if (menuRoot != nullptr && menuNav->isActive() && controller->getLastGXTime() != lastGXSyncAt)
         {
-            lcd->clear();
-            menuNav->render();
-            lcd->display();
-            lastRender = millis();
+            lastGXSyncAt = controller->getLastGXTime();
+            menuRoot->setItemValueById(ID_TRACKING, gxTrackingOn() ? "ON" : "OFF");
         }
-        else if (!menuNav->isActive() && lastRender + 250 < millis())
+
+        if (jog.isActive())
         {
-            // Keep the idle status screen fresh: piggyback on client :GX#
-            // pass-throughs and only send our own poll when none has been
-            // seen for 2 s (StatusRefresher throttles this further).
-            if (mountSerial->connected() && statusRefresher.shouldRequest(millis()))
+            // Drain the jog state machine: each returned command goes to
+            // the mount in order (NoReply, never queues long).
+            bool jogChanged = jogJustActivated;
+            const char* cmd;
+            while ((cmd = jog.tick(&rotaryAsJog, millis())) != nullptr)
             {
-                jobQueue.enqueue(new MessageJob(":GX#", JobSource::FromController));
+                enqueueCommand(cmd);
+                jogChanged = true;
             }
-            renderStatusScreen();
-            lastRender = millis();
+            jogJustActivated = false;
+
+            if (!jog.isActive())
+            {
+                // The exit long-press: back into the menu once the button
+                // is released, at the position it had.
+                waitForSelectRelease = true;
+                reopenMenuOnRelease = true;
+            }
+            else if (jogChanged || jog.activeAxis() != lastJogAxis)
+            {
+                renderJogScreen();
+                lastJogAxis = jog.activeAxis();
+                lastRender = millis();
+            }
+        }
+        else if (menuNav->isActive())
+        {
+            if (menuNav->update())
+            {
+                lcd->clear();
+                menuNav->render();
+                lcd->display();
+                lastRender = millis();
+            }
+        }
+        else
+        {
+            // Idle: a short press opens the menu, a held press (750 ms) is
+            // the Stop Everything gesture.
+            const bool selectPressed = rotaryInput->isSelectPressed();
+            if (!selectPressed)
+            {
+                if (waitForSelectRelease)
+                {
+                    waitForSelectRelease = false;
+                }
+                if (reopenMenuOnRelease)
+                {
+                    reopenMenuOnRelease = false;
+                    menuNav->setActive(true);
+                }
+                else if (idlePressStart != 0 && !idleStopSent)
+                {
+                    menuNav->setActive(true);
+                }
+                idlePressStart = 0;
+                idleStopSent = false;
+            }
+            else if (!waitForSelectRelease)
+            {
+                if (idlePressStart == 0)
+                {
+                    idlePressStart = millis();
+                }
+                else if (!idleStopSent && millis() - idlePressStart >= IDLE_STOP_ALL_MS)
+                {
+                    enqueueCommand(":Q#");
+                    idleStopSent = true;
+                }
+            }
+
+            if (!menuNav->isActive() && lastRender + 250 < millis())
+            {
+                // Keep the idle status screen fresh: piggyback on client
+                // :GX# pass-throughs and only send our own poll when none
+                // has been seen for 2 s. While jog is active the menu branch
+                // above runs instead, so the refresher pause comes free.
+                if (mountSerial->connected() && statusRefresher.shouldRequest(millis()))
+                {
+                    jobQueue.enqueue(new MessageJob(":GX#", JobSource::FromController));
+                }
+                renderStatusScreen();
+                lastRender = millis();
+            }
         }
     }
 #endif
@@ -467,6 +634,13 @@ extern "C" {
     void tuh_cdc_umount_cb(uint8_t idx) {
         SerialHost.umount(idx);
         LOG(DEBUG_CTRL, "SerialHost is disconnected.");
+#if INFO_DISPLAY == 1
+        // A different mount may have different hardware: drop the profile
+        // so the loop re-queries :XGM# and rebuilds the menu.
+        controller->setLastXGM("");
+        lastXGMAttempt = 0;
+        menuRebuiltFromXGM = false;
+#endif
     }
 
     // Device-level attach/detach logging: shows whether a device enumerates

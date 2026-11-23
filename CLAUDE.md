@@ -18,7 +18,7 @@ PlatformIO is the build system (VSCode + PlatformIO extension is the expected de
 - Clean: `pio run -t clean`
 - Unit tests (host, no hardware): `pio test -e native`; single suite: `pio test -e native -f test_menu_dispatch`
 
-The platform is pulled from a fork (`maxgerhardt/platform-raspberrypi`) and library dependencies download into `.pio/libdeps/` on first build — never edit anything under `.pio/`. Note: the `OledMenu` library is pinned by tag (`#v0.3.0`) and transitively pulls the SSD1306 OLED driver (`#4.6.2`) through its `library.json` — do not also declare the OLED driver in `lib_deps`, or it installs twice under two names and duplicate symbols break the link. The library itself lives at `github.com/ClutchplateDude/OledMenu` (local checkout: `../OledMenu`).
+The platform is pulled from a fork (`maxgerhardt/platform-raspberrypi`) and library dependencies download into `.pio/libdeps/` on first build — never edit anything under `.pio/`. Note: the `OledMenu` library is pinned by tag (`#v0.3.2`) and transitively pulls the SSD1306 OLED driver (`#4.6.2`) through its `library.json` — do not also declare the OLED driver in `lib_deps`, or it installs twice under two names and duplicate symbols break the link. The library itself lives at `github.com/ClutchplateDude/OledMenu` (local checkout: `../OledMenu`).
 
 ### Native unit tests
 
@@ -62,9 +62,15 @@ The idle status screen stays fresh via `StatusRefresher` (`src/StatusRefresher.h
 
 ### Menu & display stack (OledMenu library, gated by `INFO_DISPLAY`, currently ON)
 
-The menu system is the shared **OledMenu** library (`github.com/ClutchplateDude/OledMenu`, pinned `#v0.3.0` in `platformio.ini`): item types, `MenuNavigator` (scrolling, edit modes, 750 ms long-press), a declarative text-format `MenuParser`, the poll-based `InputDevice` interface with `RotaryEncoderInput`, and the `InfoDisplayRender` drawing surface (fonts/icons included). Develop library changes in the `../OledMenu` checkout, tag, and bump the pin here.
+The menu system is the shared **OledMenu** library (`github.com/ClutchplateDude/OledMenu`, pinned `#v0.3.2` in `platformio.ini`): item types, `MenuNavigator` (scrolling, edit modes, 750 ms long-press — note: a click fires on button-down in navigation mode, long-press-as-cancel exists only inside edit modes), a declarative text-format `MenuParser` (nested submenus supported since v0.3.2), the poll-based `InputDevice` interface with `RotaryEncoderInput`, and the `InfoDisplayRender` drawing surface (fonts/icons included). Develop library changes in the `../OledMenu` checkout, tag, and bump the pin here.
 
-HandController-side wiring lives in `src/main.cpp` behind `INFO_DISPLAY`: a `MENU_DEF` string (grammar: OledMenu's `docs/menu-format.md`) parsed at boot, the rotary encoder on `ROTARY_*_PIN`s from `configuration.hpp` (placeholders until hardware is wired), and an idle status screen (mount link + last `:GX` status). A click opens the menu; `Exit` closes it. `src/MenuCommands.hpp` maps menu item ids to LX200 commands (host-tested in `test/test_menu_dispatch`); any LX200 command may be dispatched, subject to the reply-type rule above. The concrete display class is `SDD1306OLED128x64` (`src/SSD1306_128x64_Display.hpp`) on I²C addr 0x3C.
+HandController-side wiring lives in `src/main.cpp` behind `INFO_DISPLAY`, per the approved design in `docs/superpowers/specs/2026-11-22-display-interaction-design.md`:
+
+- **Idle screen** (default): mirrors the mount's own InfoDisplay as far as the `:GX#` reply reaches — stepper-state boxes from the activity letters, status line with bouncing pixel, current RA/DEC formatted from the compact fields, link/version strip. A short press opens the menu; a held press (≥ 750 ms) is **Stop Everything** (`:Q#`, tracking included).
+- **Menu**: built by `src/MenuDefinition.hpp` (`buildMenuDef(xgm)`) from the trimmed interaction tree — Tracking toggle, Jog, Goto (21 POIs, Home/Park **confirm screens** with the cursor defaulting to "No", Unpark, nested Target form), Align (Autohome RA/DEC confirm screens, set-home, AZ/ALT arc-minute nudges), Setup (HA, date, time, UTC), gated Focus, Stop all, Exit. The tree is mirrored in `../OledMenu/sim/menu.txt` for the simulator. Hardware-dependent blocks are omitted based on the mount's `:XGM#` reply (cached in the Controller via `setLastXGM`, queried once per mount connection; a mount swap re-queries). Actions that start a motion or end a session close the menu (`menuActionClosesMenu`); reopening preserves the navigator position.
+- **Jog mode** (`src/JogController.hpp`, host-tested): the dial is a speed throttle (ladder 0.02–2.0 °/s) on the active axis, live via `:XSM1#`/`:XSX#`/`:XSY#`; click stops both axes while moving or toggles the axis when stopped; long-press stops both and exits (`:XSM0#`) back into the menu. While jog is open, the StatusRefresher's own `:GX#` polls pause.
+- `src/MenuCommands.hpp` maps menu item ids to LX200 commands (host-tested in `test/test_menu_dispatch`); any LX200 command may be dispatched, subject to the reply-type rule above. Never send a blind persisted value: every `:S…` set-command composes from values edited on-device (`TargetState`/`SetupState`).
+- The concrete display class is `SDD1306OLED128x64` (`src/SSD1306_128x64_Display.hpp`) on I²C addr 0x3C.
 
 ### Configuration & debug logging
 
