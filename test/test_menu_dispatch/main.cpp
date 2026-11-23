@@ -1,81 +1,77 @@
-// MenuCommands (src/MenuCommands.hpp): the menu-id -> LX200 dispatch used by
-// the on-device menu. The menu mirrors the mount firmware's LCD menu
-// (OpenAstroTracker-Firmware c70-c78), so each item maps to the command its
-// LCD counterpart performs: direct commands for actions, option lookups for
-// Selects, :Sr/:Sd/:MS composites for the Goto and Target forms, and set
-// commands composed from confirmed values for the Cal items. Payloads from
-// the menu library ("id|value") must split cleanly.
+// MenuCommands (src/MenuCommands.hpp): the menu-id -> LX200 dispatch for the
+// trimmed interaction tree (docs/superpowers/specs/2026-11-22-display-
+// interaction-design.md). Every mount-relevant menu activity maps to a
+// command the MessageJob lookup table knows; composites (slews, stores) are
+// built with the compose helpers; menuActionClosesMenu marks the actions
+// that drop the user back to the idle screen.
 #include "TestHarness.hpp"
 #include <unity.h>
 
 #include "MenuCommands.hpp"
 #include <string.h>
 
-void test_move_ids_map_to_lx200_move_commands()
+void test_direct_commands()
 {
-    TEST_ASSERT_EQUAL_STRING(":Mn#", menuIdToCommand(ID_MOVE_NORTH));
-    TEST_ASSERT_EQUAL_STRING(":Ms#", menuIdToCommand(ID_MOVE_SOUTH));
-    TEST_ASSERT_EQUAL_STRING(":Me#", menuIdToCommand(ID_MOVE_EAST));
-    TEST_ASSERT_EQUAL_STRING(":Mw#", menuIdToCommand(ID_MOVE_WEST));
-    // Stop ends the manual moves only; :Q# would also stop tracking.
-    TEST_ASSERT_EQUAL_STRING(":Qa#", menuIdToCommand(ID_MOVE_STOP));
-}
-
-void test_goto_ids_map_to_lx200_commands()
-{
-    TEST_ASSERT_EQUAL_STRING(":hF#", menuIdToCommand(ID_GOTO_HOME));
-    // :hU# is what the firmware's Unpark does (restarts tracking, replies "1").
+    TEST_ASSERT_EQUAL_STRING(":hF#", menuIdToCommand(ID_GOTO_HOME_YES));
+    TEST_ASSERT_EQUAL_STRING(":hP#", menuIdToCommand(ID_GOTO_PARK_YES));
+    // The firmware's Unpark merely restarts tracking; :hU# does exactly that
+    // and answers "1".
     TEST_ASSERT_EQUAL_STRING(":hU#", menuIdToCommand(ID_GOTO_UNPARK));
-    TEST_ASSERT_EQUAL_STRING(":hP#", menuIdToCommand(ID_GOTO_PARK));
-}
-
-void test_set_home_maps_to_set_home_point()
-{
-    TEST_ASSERT_EQUAL_STRING(":SHP#", menuIdToCommand(ID_MOVE_SET_HOME));
-}
-
-// Clearing a DEC limit is the lowercase leaf (:XSDLl#), setting it the
-// uppercase one with no payload (= current position).
-void test_dec_limit_ids_map_to_set_and_clear_commands()
-{
-    TEST_ASSERT_EQUAL_STRING(":XSDLL#", menuIdToCommand(ID_CAL_SET_LOWER));
-    TEST_ASSERT_EQUAL_STRING(":XSDLl#", menuIdToCommand(ID_CAL_CLEAR_LOWER));
-    TEST_ASSERT_EQUAL_STRING(":XSDLU#", menuIdToCommand(ID_CAL_SET_UPPER));
-    TEST_ASSERT_EQUAL_STRING(":XSDLu#", menuIdToCommand(ID_CAL_CLEAR_UPPER));
-}
-
-void test_az_alt_nudges_map_to_arcminute_moves()
-{
-    TEST_ASSERT_EQUAL_STRING(":MAZ+1.0#", menuIdToCommand(ID_CAL_AZ_PLUS));
-    TEST_ASSERT_EQUAL_STRING(":MAZ-1.0#", menuIdToCommand(ID_CAL_AZ_MINUS));
-    TEST_ASSERT_EQUAL_STRING(":MAL+1.0#", menuIdToCommand(ID_CAL_ALT_PLUS));
-    TEST_ASSERT_EQUAL_STRING(":MAL-1.0#", menuIdToCommand(ID_CAL_ALT_MINUS));
-}
-
-void test_focus_ids_map_to_focus_commands()
-{
+    // Direction letters are the builder-tunable defaults and mandatory: a
+    // bare :MHR# is rejected by the mount's movement parser.
+    TEST_ASSERT_EQUAL_STRING(":MHRr#", menuIdToCommand(ID_ALIGN_AUTOHOME_RA_YES));
+    TEST_ASSERT_EQUAL_STRING(":MHDd#", menuIdToCommand(ID_ALIGN_AUTOHOME_DEC_YES));
+    TEST_ASSERT_EQUAL_STRING(":SHP#", menuIdToCommand(ID_ALIGN_SET_HOME));
+    TEST_ASSERT_EQUAL_STRING(":MAZ+1.0#", menuIdToCommand(ID_ALIGN_AZ_PLUS));
+    TEST_ASSERT_EQUAL_STRING(":MAZ-1.0#", menuIdToCommand(ID_ALIGN_AZ_MINUS));
+    TEST_ASSERT_EQUAL_STRING(":MAL+1.0#", menuIdToCommand(ID_ALIGN_ALT_PLUS));
+    TEST_ASSERT_EQUAL_STRING(":MAL-1.0#", menuIdToCommand(ID_ALIGN_ALT_MINUS));
     TEST_ASSERT_EQUAL_STRING(":F+#", menuIdToCommand(ID_FOCUS_IN));
     TEST_ASSERT_EQUAL_STRING(":F-#", menuIdToCommand(ID_FOCUS_OUT));
     TEST_ASSERT_EQUAL_STRING(":FQ#", menuIdToCommand(ID_FOCUS_STOP));
+    // Stop-all includes tracking; :Qa# (manual moves only) is not this.
+    TEST_ASSERT_EQUAL_STRING(":Q#", menuIdToCommand(ID_STOP_ALL));
 }
 
 void test_non_mount_ids_map_to_null()
 {
     TEST_ASSERT_NULL(menuIdToCommand(ID_MENU_ROOT));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_TRACKING));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_JOG));
     TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_GOTO));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_OBJECT));  // composite
+    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_HOME_Q));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_HOME_NO));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_PARK_Q));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_PARK_NO));
     TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_TARGET));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_MOVE));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_CAL));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_FOCUS));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_HA));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_INFO));
-    TEST_ASSERT_NULL(menuIdToCommand(ID_GOTO_OBJECT));  // composite, not a single command
     TEST_ASSERT_NULL(menuIdToCommand(ID_TARGET_RA_HOURS));
     TEST_ASSERT_NULL(menuIdToCommand(ID_TARGET_SLEW));  // composite
-    TEST_ASSERT_NULL(menuIdToCommand(ID_HA_STORE));     // composite
-    TEST_ASSERT_NULL(menuIdToCommand(ID_INFO_FIRMWARE));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_ALIGN));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_ALIGN_AUTOHOME_RA_Q));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_ALIGN_AUTOHOME_RA_NO));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_ALIGN_AUTOHOME_DEC_Q));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_ALIGN_AUTOHOME_DEC_NO));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_SETUP));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_HA_HOURS));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_HA_STORE));  // composite
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_DATE_STORE));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_TIME_STORE));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_UTC));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SETUP_UTC_STORE));  // composite
+    TEST_ASSERT_NULL(menuIdToCommand(ID_SUB_FOCUS));
+    TEST_ASSERT_NULL(menuIdToCommand(ID_FOCUS_RATE));
     TEST_ASSERT_NULL(menuIdToCommand(ID_MENU_EXIT));
-    TEST_ASSERT_NULL(menuIdToCommand(1234));
+    TEST_ASSERT_NULL(menuIdToCommand(999));
+}
+
+void test_tracking_toggle_maps_to_start_and_stop()
+{
+    TEST_ASSERT_EQUAL_STRING(":MT1#", trackingToggleToCommand("ON"));
+    TEST_ASSERT_EQUAL_STRING(":MT0#", trackingToggleToCommand("OFF"));
+    TEST_ASSERT_NULL(trackingToggleToCommand("1"));
+    TEST_ASSERT_NULL(trackingToggleToCommand(""));
+    TEST_ASSERT_NULL(trackingToggleToCommand(nullptr));
 }
 
 void test_rate_options_map_to_rate_commands()
@@ -85,7 +81,7 @@ void test_rate_options_map_to_rate_commands()
     TEST_ASSERT_EQUAL_STRING(":RM#", rateOptionToCommand("Find"));
     TEST_ASSERT_EQUAL_STRING(":RS#", rateOptionToCommand("Max"));
     TEST_ASSERT_NULL(rateOptionToCommand("Sidereal"));
-    TEST_ASSERT_NULL(rateOptionToCommand(""));
+    TEST_ASSERT_NULL(rateOptionToCommand(nullptr));
 }
 
 void test_focus_rate_options_map_to_speed_presets()
@@ -98,33 +94,32 @@ void test_focus_rate_options_map_to_speed_presets()
     TEST_ASSERT_NULL(focusRateOptionToCommand(nullptr));
 }
 
-// The Cal value items send their set command with the confirmed value. The
-// UTC offset needs its sign spelled out (:SG+2#, :SG-5#) - the mount's
-// reader rejects an unsigned offset.
-void test_cal_values_compose_set_commands()
+// Actions that end in a motion or a session boundary drop the user back to
+// the idle screen; settings, editors and the confirm screens' "No" do not.
+void test_close_after_action_set()
 {
-    char buf[24];
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_GOTO_OBJECT));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_TARGET_SLEW));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_GOTO_HOME_YES));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_GOTO_PARK_YES));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_GOTO_UNPARK));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_ALIGN_AUTOHOME_RA_YES));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_ALIGN_AUTOHOME_DEC_YES));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_SETUP_HA_STORE));
+    TEST_ASSERT_TRUE(menuActionClosesMenu(ID_STOP_ALL));
 
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_TRACK_SPEED, "1.023", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":XSS1.023#", buf);
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_RA_STEPS, "96.0", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":XSR96.0#", buf);
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_DEC_STEPS, "96.0", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":XSD96.0#", buf);
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_BACKLASH, "45", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":XSB45#", buf);
-
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_UTC_OFFSET, "2", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":SG+2#", buf);
-    TEST_ASSERT_TRUE(menuValueToCommand(ID_CAL_UTC_OFFSET, "-5", buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL_STRING(":SG-5#", buf);
-
-    TEST_ASSERT_FALSE(menuValueToCommand(ID_CAL_SET_LOWER, "", buf, sizeof(buf)));
-    TEST_ASSERT_FALSE(menuValueToCommand(1234, "1", buf, sizeof(buf)));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_TRACKING));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_JOG));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_MENU_EXIT));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_GOTO_HOME_NO));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_GOTO_PARK_NO));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_ALIGN_SET_HOME));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_SETUP_DATE_STORE));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_SETUP_TIME_STORE));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(ID_SETUP_UTC_STORE));
+    TEST_ASSERT_FALSE(menuActionClosesMenu(999));
 }
 
-// The firmware's point-of-interest table (c722_menuPOI.hpp): the options of
-// the Object select resolve to their coordinates.
 void test_poi_options_resolve_to_coordinates()
 {
     SkyCoordinate coord;
@@ -154,8 +149,7 @@ void test_poi_options_resolve_to_coordinates()
     TEST_ASSERT_FALSE(poiCoordinates(nullptr, &coord));
 }
 
-// The Target and HA forms: each editor item's confirm updates the state,
-// and the Slew/Store actions compose from it.
+// The Target form: editor confirms update the state, Slew composes from it.
 void test_target_state_collects_editor_values()
 {
     TargetState state;
@@ -168,8 +162,6 @@ void test_target_state_collects_editor_values()
     TEST_ASSERT_TRUE(updateTargetState(&state, ID_TARGET_DEC_DEGREES, "45"));
     TEST_ASSERT_TRUE(updateTargetState(&state, ID_TARGET_DEC_MINUTES, "30"));
     TEST_ASSERT_TRUE(updateTargetState(&state, ID_TARGET_DEC_SECONDS, "0"));
-    TEST_ASSERT_TRUE(updateTargetState(&state, ID_HA_HOURS, "7"));
-    TEST_ASSERT_TRUE(updateTargetState(&state, ID_HA_MINUTES, "30"));
 
     SkyCoordinate coord;
     targetCoordinate(&state, &coord);
@@ -181,22 +173,74 @@ void test_target_state_collects_editor_values()
     TEST_ASSERT_EQUAL_UINT8(30, coord.decMinutes);
     TEST_ASSERT_EQUAL_UINT8(0, coord.decSeconds);
 
-    // Cal items and unknown ids are not part of the form.
-    TEST_ASSERT_FALSE(updateTargetState(&state, ID_CAL_TRACK_SPEED, "1.0"));
-    TEST_ASSERT_FALSE(updateTargetState(&state, 1234, "1"));
-}
-
-void test_target_state_toggle_off_means_positive()
-{
-    TargetState state;
-    initTargetState(&state);
-
-    TEST_ASSERT_TRUE(updateTargetState(&state, ID_TARGET_DEC_SIGN, "ON"));
     TEST_ASSERT_TRUE(updateTargetState(&state, ID_TARGET_DEC_SIGN, "OFF"));
-
-    SkyCoordinate coord;
     targetCoordinate(&state, &coord);
     TEST_ASSERT_FALSE(coord.decNegative);
+
+    // Setup ids are not part of the Target form.
+    TEST_ASSERT_FALSE(updateTargetState(&state, ID_SETUP_HA_HOURS, "7"));
+    TEST_ASSERT_FALSE(updateTargetState(&state, 999, "1"));
+}
+
+void test_setup_state_collects_editor_values()
+{
+    SetupState state;
+    initSetupState(&state);
+
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_HA_HOURS, "7"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_HA_MINUTES, "30"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_DATE_MONTH, "12"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_DATE_DAY, "31"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_DATE_YEAR, "26"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_TIME_HOURS, "23"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_TIME_MINUTES, "59"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_TIME_SECONDS, "59"));
+    TEST_ASSERT_TRUE(updateSetupState(&state, ID_SETUP_UTC, "-5"));
+    TEST_ASSERT_EQUAL_INT8(7, state.haHours);
+    TEST_ASSERT_EQUAL_INT8(30, state.haMinutes);
+    TEST_ASSERT_EQUAL_INT8(12, state.dateMonth);
+    TEST_ASSERT_EQUAL_INT8(31, state.dateDay);
+    TEST_ASSERT_EQUAL_INT8(26, state.dateYear);
+    TEST_ASSERT_EQUAL_INT8(23, state.timeHours);
+    TEST_ASSERT_EQUAL_INT8(59, state.timeMinutes);
+    TEST_ASSERT_EQUAL_INT8(59, state.timeSeconds);
+    TEST_ASSERT_EQUAL_INT32(-5, state.utcOffset);
+
+    // Target ids are not part of Setup.
+    TEST_ASSERT_FALSE(updateSetupState(&state, ID_TARGET_RA_HOURS, "2"));
+    TEST_ASSERT_FALSE(updateSetupState(&state, 999, "1"));
+}
+
+// Formats exactly as the mount's Set parser reads them: :SH has no sign,
+// :SL is colon-separated, :SC is the LX200 MM/DD/YY form, :SG needs the
+// sign spelled out.
+void test_setup_composes()
+{
+    SetupState state;
+    initSetupState(&state);
+    updateSetupState(&state, ID_SETUP_HA_HOURS, "7");
+    updateSetupState(&state, ID_SETUP_HA_MINUTES, "30");
+    updateSetupState(&state, ID_SETUP_TIME_HOURS, "23");
+    updateSetupState(&state, ID_SETUP_TIME_MINUTES, "59");
+    updateSetupState(&state, ID_SETUP_TIME_SECONDS, "59");
+    updateSetupState(&state, ID_SETUP_DATE_MONTH, "12");
+    updateSetupState(&state, ID_SETUP_DATE_DAY, "31");
+    updateSetupState(&state, ID_SETUP_DATE_YEAR, "26");
+    updateSetupState(&state, ID_SETUP_UTC, "2");
+
+    char buf[24];
+    composeShCommand(&state, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(":SH07:30#", buf);
+    composeSlCommand(&state, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(":SL23:59:59#", buf);
+    composeScCommand(&state, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(":SC12/31/26#", buf);
+    composeSgCommand(&state, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(":SG+2#", buf);
+
+    updateSetupState(&state, ID_SETUP_UTC, "-5");
+    composeSgCommand(&state, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING(":SG-5#", buf);
 }
 
 // Formats exactly as the mount's Set parser reads them: :SrHH:MM:SS# and
@@ -211,24 +255,11 @@ void test_compose_slew_commands()
     composeSdCommand(&coord, buf, sizeof(buf));
     TEST_ASSERT_EQUAL_STRING(":Sd-45*30:00#", buf);
 
-    SkyCoordinate polaris = {0, 43, 52, false, 41, 22, 53};
-    composeSrCommand(&polaris, buf, sizeof(buf));
+    SkyCoordinate m31 = {0, 43, 52, false, 41, 22, 53};
+    composeSrCommand(&m31, buf, sizeof(buf));
     TEST_ASSERT_EQUAL_STRING(":Sr00:43:52#", buf);
-    composeSdCommand(&polaris, buf, sizeof(buf));
+    composeSdCommand(&m31, buf, sizeof(buf));
     TEST_ASSERT_EQUAL_STRING(":Sd+41*22:53#", buf);
-}
-
-// :SH accepts an unsigned two-digit hour angle and any single separator.
-void test_compose_hour_angle_command()
-{
-    TargetState state;
-    initTargetState(&state);
-    updateTargetState(&state, ID_HA_HOURS, "7");
-    updateTargetState(&state, ID_HA_MINUTES, "30");
-
-    char buf[24];
-    composeShCommand(&state, buf, sizeof(buf));
-    TEST_ASSERT_EQUAL_STRING(":SH07:30#", buf);
 }
 
 void test_parse_payload_splits_id_and_value()
@@ -236,12 +267,12 @@ void test_parse_payload_splits_id_and_value()
     uint16_t id = 0;
     const char* value = nullptr;
 
-    TEST_ASSERT_TRUE(parseMenuPayload("305|Center", &id, &value));
-    TEST_ASSERT_EQUAL_UINT16(ID_MOVE_RATE, id);
-    TEST_ASSERT_EQUAL_STRING("Center", value);
+    TEST_ASSERT_TRUE(parseMenuPayload("207|x", &id, &value));
+    TEST_ASSERT_EQUAL_UINT16(ID_TARGET_SLEW, id);
+    TEST_ASSERT_EQUAL_STRING("x", value);
 
-    TEST_ASSERT_TRUE(parseMenuPayload("304|", &id, &value));
-    TEST_ASSERT_EQUAL_UINT16(ID_MOVE_STOP, id);
+    TEST_ASSERT_TRUE(parseMenuPayload("112|", &id, &value));
+    TEST_ASSERT_EQUAL_UINT16(ID_GOTO_HOME_YES, id);
     TEST_ASSERT_EQUAL_STRING("", value);
 }
 
@@ -259,21 +290,17 @@ void test_parse_payload_rejects_malformed_input()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_move_ids_map_to_lx200_move_commands);
-    RUN_TEST(test_goto_ids_map_to_lx200_commands);
-    RUN_TEST(test_set_home_maps_to_set_home_point);
-    RUN_TEST(test_dec_limit_ids_map_to_set_and_clear_commands);
-    RUN_TEST(test_az_alt_nudges_map_to_arcminute_moves);
-    RUN_TEST(test_focus_ids_map_to_focus_commands);
+    RUN_TEST(test_direct_commands);
     RUN_TEST(test_non_mount_ids_map_to_null);
+    RUN_TEST(test_tracking_toggle_maps_to_start_and_stop);
     RUN_TEST(test_rate_options_map_to_rate_commands);
     RUN_TEST(test_focus_rate_options_map_to_speed_presets);
-    RUN_TEST(test_cal_values_compose_set_commands);
+    RUN_TEST(test_close_after_action_set);
     RUN_TEST(test_poi_options_resolve_to_coordinates);
     RUN_TEST(test_target_state_collects_editor_values);
-    RUN_TEST(test_target_state_toggle_off_means_positive);
+    RUN_TEST(test_setup_state_collects_editor_values);
+    RUN_TEST(test_setup_composes);
     RUN_TEST(test_compose_slew_commands);
-    RUN_TEST(test_compose_hour_angle_command);
     RUN_TEST(test_parse_payload_splits_id_and_value);
     RUN_TEST(test_parse_payload_rejects_malformed_input);
     return UNITY_END();

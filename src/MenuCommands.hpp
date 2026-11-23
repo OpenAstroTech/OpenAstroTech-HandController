@@ -4,20 +4,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Menu item ids for the on-device menu (see the MENU_DEF in main.cpp and
-// the draft in the OledMenu simulator's menu.txt). These are globally
-// unique and must match the ids in the menu definition; submenu/container
-// ids intentionally have no mount command. The menu mirrors the mount
-// firmware's LCD menu (OpenAstroTracker-Firmware, c70-c78), and each item
-// maps to the LX200 command its LCD counterpart performs.
+// Menu item ids for the on-device menu (see MenuDefinition.hpp for the menu
+// definition and docs/superpowers/specs/2026-11-22-display-interaction-
+// design.md for the interaction design). Globally unique; must match the
+// ids in the menu definition. Each item maps to the LX200 command its
+// mount-firmware counterpart performs (handlers under src/core/meade/
+// MeadeParser*.cpp in OpenAstroTracker-Firmware are authoritative over its
+// protocol docs).
 enum MenuCommandId : uint16_t
 {
     ID_MENU_ROOT = 1,
+    ID_TRACKING = 2,
+    ID_JOG = 3,
     ID_SUB_GOTO = 10,
     ID_GOTO_OBJECT = 100,
-    ID_GOTO_HOME = 101,
-    ID_GOTO_UNPARK = 102,
-    ID_GOTO_PARK = 103,
+    ID_GOTO_HOME_Q = 110,
+    ID_GOTO_HOME_NO = 111,
+    ID_GOTO_HOME_YES = 112,
+    ID_GOTO_PARK_Q = 120,
+    ID_GOTO_PARK_NO = 121,
+    ID_GOTO_PARK_YES = 122,
+    ID_GOTO_UNPARK = 103,
     ID_SUB_TARGET = 20,
     ID_TARGET_RA_HOURS = 200,
     ID_TARGET_RA_MINUTES = 201,
@@ -27,45 +34,38 @@ enum MenuCommandId : uint16_t
     ID_TARGET_DEC_MINUTES = 205,
     ID_TARGET_DEC_SECONDS = 206,
     ID_TARGET_SLEW = 207,
-    ID_SUB_MOVE = 30,
-    ID_MOVE_NORTH = 300,
-    ID_MOVE_SOUTH = 301,
-    ID_MOVE_EAST = 302,
-    ID_MOVE_WEST = 303,
-    ID_MOVE_STOP = 304,
-    ID_MOVE_RATE = 305,
-    ID_MOVE_SET_HOME = 306,
-    ID_SUB_CAL = 40,
-    ID_CAL_TRACK_SPEED = 402,
-    ID_CAL_RA_STEPS = 403,
-    ID_CAL_DEC_STEPS = 404,
-    ID_CAL_BACKLASH = 405,
-    ID_CAL_SET_LOWER = 406,
-    ID_CAL_CLEAR_LOWER = 407,
-    ID_CAL_SET_UPPER = 408,
-    ID_CAL_CLEAR_UPPER = 409,
-    ID_CAL_UTC_OFFSET = 410,
-    ID_CAL_AZ_PLUS = 411,
-    ID_CAL_AZ_MINUS = 412,
-    ID_CAL_ALT_PLUS = 413,
-    ID_CAL_ALT_MINUS = 414,
+    ID_SUB_ALIGN = 30,
+    ID_ALIGN_AUTOHOME_RA_Q = 310,
+    ID_ALIGN_AUTOHOME_RA_NO = 311,
+    ID_ALIGN_AUTOHOME_RA_YES = 312,
+    ID_ALIGN_AUTOHOME_DEC_Q = 320,
+    ID_ALIGN_AUTOHOME_DEC_NO = 321,
+    ID_ALIGN_AUTOHOME_DEC_YES = 322,
+    ID_ALIGN_SET_HOME = 330,
+    ID_ALIGN_AZ_PLUS = 340,
+    ID_ALIGN_AZ_MINUS = 341,
+    ID_ALIGN_ALT_PLUS = 350,
+    ID_ALIGN_ALT_MINUS = 351,
+    ID_SUB_SETUP = 40,
+    ID_SETUP_HA_HOURS = 402,
+    ID_SETUP_HA_MINUTES = 403,
+    ID_SETUP_HA_STORE = 404,
+    ID_SETUP_DATE_MONTH = 410,
+    ID_SETUP_DATE_DAY = 411,
+    ID_SETUP_DATE_YEAR = 412,
+    ID_SETUP_DATE_STORE = 413,
+    ID_SETUP_TIME_HOURS = 420,
+    ID_SETUP_TIME_MINUTES = 421,
+    ID_SETUP_TIME_SECONDS = 422,
+    ID_SETUP_TIME_STORE = 423,
+    ID_SETUP_UTC = 430,
+    ID_SETUP_UTC_STORE = 431,
     ID_SUB_FOCUS = 50,
     ID_FOCUS_IN = 500,
     ID_FOCUS_OUT = 501,
     ID_FOCUS_STOP = 502,
     ID_FOCUS_RATE = 503,
-    ID_SUB_HA = 60,
-    ID_HA_HOURS = 600,
-    ID_HA_MINUTES = 601,
-    ID_HA_STORE = 602,
-    ID_SUB_INFO = 70,
-    ID_INFO_RA = 700,
-    ID_INFO_DEC = 701,
-    ID_INFO_SITE = 702,
-    ID_INFO_DATE = 703,
-    ID_INFO_UTC_OFFSET = 704,
-    ID_INFO_LOCAL_TIME = 705,
-    ID_INFO_FIRMWARE = 706,
+    ID_STOP_ALL = 90,
     ID_MENU_EXIT = 99,
 };
 
@@ -82,54 +82,77 @@ struct SkyCoordinate
     uint8_t decSeconds;
 };
 
-// The Target and HA forms' editor state, updated from each item's confirm.
+// The Target form's editor state, updated from each item's confirm.
 struct TargetState
 {
     SkyCoordinate target;
+};
+
+// The Setup forms' editor state (HA, date, time, UTC offset), updated from
+// each item's confirm.
+struct SetupState
+{
     uint8_t haHours;
     uint8_t haMinutes;
+    uint8_t dateMonth;
+    uint8_t dateDay;
+    uint8_t dateYear;   // 2-digit year, as :SC takes it
+    uint8_t timeHours;
+    uint8_t timeMinutes;
+    uint8_t timeSeconds;
+    int utcOffset;
 };
 
 // Maps a menu item id to the single LX200 command the mount should
-// receive, or nullptr for containers/labels/composites (the composites are
-// built with the compose helpers below) and items with no mount side
-// effect. Any LX200 command may be returned: MessageJob reads the reply of
-// a command it does not list as one '#'-terminated string, and its table
-// holds only the exceptions (no reply, one character).
+// receive, or nullptr for containers/editors/composites (composites are
+// built with the compose helpers below), the confirm screens' "No"
+// actions, and items with no mount side effect. Any LX200 command may be
+// returned: MessageJob reads the reply of a command it does not list as
+// one '#'-terminated string, and its table holds only the exceptions.
 inline const char* menuIdToCommand(uint16_t id)
 {
     switch (id)
     {
-        case ID_MOVE_NORTH: return ":Mn#";
-        case ID_MOVE_SOUTH: return ":Ms#";
-        case ID_MOVE_EAST:  return ":Me#";
-        case ID_MOVE_WEST:  return ":Mw#";
-        // Stops the manual moves only. :Q# would stop tracking as well.
-        case ID_MOVE_STOP:  return ":Qa#";
-        case ID_MOVE_SET_HOME: return ":SHP#";
-        case ID_GOTO_HOME:   return ":hF#";
+        // Confirm-screen Yes actions and the direct actions.
+        case ID_GOTO_HOME_YES: return ":hF#";
+        case ID_GOTO_PARK_YES: return ":hP#";
         // The firmware's Unpark merely restarts tracking; :hU# does exactly
         // that and answers "1".
         case ID_GOTO_UNPARK: return ":hU#";
-        case ID_GOTO_PARK:   return ":hP#";
-        // DEC limits: uppercase sets to the current position, lowercase clears.
-        case ID_CAL_SET_LOWER:   return ":XSDLL#";
-        case ID_CAL_CLEAR_LOWER: return ":XSDLl#";
-        case ID_CAL_SET_UPPER:   return ":XSDLU#";
-        case ID_CAL_CLEAR_UPPER: return ":XSDLu#";
-        // The firmware's arc-minute AZ/ALT adjustments, one arcminute at a time.
-        case ID_CAL_AZ_PLUS:  return ":MAZ+1.0#";
-        case ID_CAL_AZ_MINUS: return ":MAZ-1.0#";
-        case ID_CAL_ALT_PLUS: return ":MAL+1.0#";
-        case ID_CAL_ALT_MINUS: return ":MAL-1.0#";
+        // Hall-sensor auto-home. The direction letter is mandatory (a bare
+        // :MHR# is rejected by the mount's movement parser); 'r'/'d' are
+        // the builder-tunable defaults.
+        case ID_ALIGN_AUTOHOME_RA_YES: return ":MHRr#";
+        case ID_ALIGN_AUTOHOME_DEC_YES: return ":MHDd#";
+        // CTRL menu's set-current-as-home.
+        case ID_ALIGN_SET_HOME: return ":SHP#";
+        // The firmware's arc-minute AZ/ALT adjustments, one arcminute at a
+        // time.
+        case ID_ALIGN_AZ_PLUS:   return ":MAZ+1.0#";
+        case ID_ALIGN_AZ_MINUS:  return ":MAZ-1.0#";
+        case ID_ALIGN_ALT_PLUS:  return ":MAL+1.0#";
+        case ID_ALIGN_ALT_MINUS: return ":MAL-1.0#";
         case ID_FOCUS_IN:   return ":F+#";
         case ID_FOCUS_OUT:  return ":F-#";
         case ID_FOCUS_STOP: return ":FQ#";
+        // The panic gesture: stops everything INCLUDING tracking (:Qa#
+        // would only stop manual moves).
+        case ID_STOP_ALL: return ":Q#";
         default: return nullptr;
     }
 }
 
-// Maps the Move "Rate" list item's selected option to a rate command.
+// Maps the Tracking toggle's ON/OFF payload to the tracking commands.
+inline const char* trackingToggleToCommand(const char* onOff)
+{
+    if (onOff == nullptr) return nullptr;
+    if (strcmp(onOff, "ON") == 0)  return ":MT1#";
+    if (strcmp(onOff, "OFF") == 0) return ":MT0#";
+    return nullptr;
+}
+
+// Maps the (unused today) Move-rate list to rate commands, kept for the
+// sim and any future rate picker.
 inline const char* rateOptionToCommand(const char* option)
 {
     if (option == nullptr) return nullptr;
@@ -149,28 +172,6 @@ inline const char* focusRateOptionToCommand(const char* option)
     if (strcmp(option, "3 (large)") == 0)    return ":F3#";
     if (strcmp(option, "4 (largest)") == 0)  return ":F4#";
     return nullptr;
-}
-
-// Fills buf with the LX200 set command for a Cal value item's confirmed
-// value, or returns false when the id is not a value item.
-inline bool menuValueToCommand(uint16_t id, const char* value, char* buf, size_t bufSize)
-{
-    if (value == nullptr || buf == nullptr || bufSize == 0)
-    {
-        return false;
-    }
-    switch (id)
-    {
-        case ID_CAL_TRACK_SPEED: snprintf(buf, bufSize, ":XSS%s#", value); return true;
-        case ID_CAL_RA_STEPS:    snprintf(buf, bufSize, ":XSR%s#", value); return true;
-        case ID_CAL_DEC_STEPS:   snprintf(buf, bufSize, ":XSD%s#", value); return true;
-        case ID_CAL_BACKLASH:    snprintf(buf, bufSize, ":XSB%s#", value); return true;
-        case ID_CAL_UTC_OFFSET:
-            // The mount requires the sign; the integer editor omits '+'.
-            snprintf(buf, bufSize, ":SG%s%s#", value[0] == '-' ? "" : "+", value);
-            return true;
-        default: return false;
-    }
 }
 
 // The mount firmware's points of interest (c722_menuPOI.hpp), in its
@@ -228,8 +229,8 @@ inline void initTargetState(TargetState* state)
     memset(state, 0, sizeof(TargetState));
 }
 
-// Applies a Target/HA editor item's confirmed value to the state; returns
-// false when the id is not part of either form.
+// Applies a Target editor item's confirmed value to the state; returns
+// false when the id is not part of the form.
 inline bool updateTargetState(TargetState* state, uint16_t id, const char* value)
 {
     if (state == nullptr || value == nullptr)
@@ -239,15 +240,13 @@ inline bool updateTargetState(TargetState* state, uint16_t id, const char* value
     long v = atol(value);
     switch (id)
     {
-        case ID_TARGET_RA_HOURS:   state->target.raHours = (uint8_t) v; return true;
-        case ID_TARGET_RA_MINUTES: state->target.raMinutes = (uint8_t) v; return true;
-        case ID_TARGET_RA_SECONDS: state->target.raSeconds = (uint8_t) v; return true;
-        case ID_TARGET_DEC_SIGN:   state->target.decNegative = (strcmp(value, "ON") == 0); return true;
-        case ID_TARGET_DEC_DEGREES:  state->target.decDegrees = (uint8_t) v; return true;
-        case ID_TARGET_DEC_MINUTES:  state->target.decMinutes = (uint8_t) v; return true;
-        case ID_TARGET_DEC_SECONDS:  state->target.decSeconds = (uint8_t) v; return true;
-        case ID_HA_HOURS:   state->haHours = (uint8_t) v; return true;
-        case ID_HA_MINUTES: state->haMinutes = (uint8_t) v; return true;
+        case ID_TARGET_RA_HOURS:    state->target.raHours = (uint8_t) v; return true;
+        case ID_TARGET_RA_MINUTES:  state->target.raMinutes = (uint8_t) v; return true;
+        case ID_TARGET_RA_SECONDS:  state->target.raSeconds = (uint8_t) v; return true;
+        case ID_TARGET_DEC_SIGN:    state->target.decNegative = (strcmp(value, "ON") == 0); return true;
+        case ID_TARGET_DEC_DEGREES: state->target.decDegrees = (uint8_t) v; return true;
+        case ID_TARGET_DEC_MINUTES: state->target.decMinutes = (uint8_t) v; return true;
+        case ID_TARGET_DEC_SECONDS: state->target.decSeconds = (uint8_t) v; return true;
         default: return false;
     }
 }
@@ -257,9 +256,41 @@ inline void targetCoordinate(const TargetState* state, SkyCoordinate* out)
     *out = state->target;
 }
 
-// Composes the commands the composites enqueue: :SrHH:MM:SS#,
-// :Sd+DD*MM:SS# (the mount's Set parser requires the sign and seconds),
-// and :SHHH:MM#.
+inline void initSetupState(SetupState* state)
+{
+    memset(state, 0, sizeof(SetupState));
+}
+
+// Applies a Setup editor item's confirmed value to the state; returns
+// false when the id is not part of any Setup form. The date year is kept
+// as the 2-digit form :SC takes.
+inline bool updateSetupState(SetupState* state, uint16_t id, const char* value)
+{
+    if (state == nullptr || value == nullptr)
+    {
+        return false;
+    }
+    long v = atol(value);
+    switch (id)
+    {
+        case ID_SETUP_HA_HOURS:     state->haHours = (uint8_t) v; return true;
+        case ID_SETUP_HA_MINUTES:   state->haMinutes = (uint8_t) v; return true;
+        case ID_SETUP_DATE_MONTH:   state->dateMonth = (uint8_t) v; return true;
+        case ID_SETUP_DATE_DAY:     state->dateDay = (uint8_t) v; return true;
+        case ID_SETUP_DATE_YEAR:    state->dateYear = (uint8_t) v; return true;
+        case ID_SETUP_TIME_HOURS:   state->timeHours = (uint8_t) v; return true;
+        case ID_SETUP_TIME_MINUTES: state->timeMinutes = (uint8_t) v; return true;
+        case ID_SETUP_TIME_SECONDS: state->timeSeconds = (uint8_t) v; return true;
+        case ID_SETUP_UTC:          state->utcOffset = (int) v; return true;
+        default: return false;
+    }
+}
+
+// Composes the commands the composites enqueue, in exactly the formats the
+// mount's Set parser accepts: :SrHH:MM:SS# and :Sd+DD*MM:SS# (sign and
+// seconds mandatory), :SHHH:MM# (no sign, bare HH<sep>MM), :SLHH:MM:SS#,
+// :SCMM/DD/YY#, :SGsHH# (sign spelled out - the mount rejects an unsigned
+// offset).
 inline void composeSrCommand(const SkyCoordinate* coord, char* buf, size_t bufSize)
 {
     snprintf(buf, bufSize, ":Sr%02u:%02u:%02u#",
@@ -273,9 +304,51 @@ inline void composeSdCommand(const SkyCoordinate* coord, char* buf, size_t bufSi
              coord->decDegrees, coord->decMinutes, coord->decSeconds);
 }
 
-inline void composeShCommand(const TargetState* state, char* buf, size_t bufSize)
+inline void composeShCommand(const SetupState* state, char* buf, size_t bufSize)
 {
     snprintf(buf, bufSize, ":SH%02u:%02u#", state->haHours, state->haMinutes);
+}
+
+inline void composeSlCommand(const SetupState* state, char* buf, size_t bufSize)
+{
+    snprintf(buf, bufSize, ":SL%02u:%02u:%02u#",
+             state->timeHours, state->timeMinutes, state->timeSeconds);
+}
+
+inline void composeScCommand(const SetupState* state, char* buf, size_t bufSize)
+{
+    snprintf(buf, bufSize, ":SC%02u/%02u/%02u#",
+             state->dateMonth, state->dateDay, state->dateYear);
+}
+
+inline void composeSgCommand(const SetupState* state, char* buf, size_t bufSize)
+{
+    snprintf(buf, bufSize, ":SG%c%u#",
+             state->utcOffset < 0 ? '-' : '+',
+             state->utcOffset < 0 ? (unsigned) (-state->utcOffset) : (unsigned) state->utcOffset);
+}
+
+// True when firing this id should also drop the user back to the idle
+// screen: actions that start a motion or end a session (slew, park,
+// unpark, home, autohome, HA store, stop-all). Settings and the confirm
+// screens' "No" keep the menu open.
+inline bool menuActionClosesMenu(uint16_t id)
+{
+    switch (id)
+    {
+        case ID_GOTO_OBJECT:
+        case ID_TARGET_SLEW:
+        case ID_GOTO_HOME_YES:
+        case ID_GOTO_PARK_YES:
+        case ID_GOTO_UNPARK:
+        case ID_ALIGN_AUTOHOME_RA_YES:
+        case ID_ALIGN_AUTOHOME_DEC_YES:
+        case ID_SETUP_HA_STORE:
+        case ID_STOP_ALL:
+            return true;
+        default:
+            return false;
+    }
 }
 
 // Splits a menu activity payload of the form "id|value" (the OledMenu
